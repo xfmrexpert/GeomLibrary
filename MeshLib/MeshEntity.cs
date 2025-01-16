@@ -9,5 +9,7 @@ namespace MeshLib
     public class MeshEntity
     {
         public uint ID { get; set; }
+
+        public int AttribID { get; set; }
     }
 }

@@ -1,8 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Formats.Asn1;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace MeshLib
 {
@@ -20,7 +23,7 @@ namespace MeshLib
             foreach (var halfEdge in HalfEdges)
             {
                 var edge = (halfEdge.PrevVertex, halfEdge.NextVertex);
-                if (edge.Item2 != null && !edgeSet.Contains((edge.Item2, edge.Item1)))
+                if (edge.NextVertex != null && !edgeSet.Contains((edge.NextVertex, edge.PrevVertex)))
                 {
                     edgeSet.Add(edge);
                 }
@@ -41,13 +44,18 @@ namespace MeshLib
                 MeshVertex newVertex = new MeshVertex(node.Id, newNode);
                 Vertices.Insert((int)node.Id, newVertex);
             }
+            List<GmshElement> postProcessElements = new List<GmshElement>();
             foreach (var elem in gmshFile.Elements)
             {
                 switch (elem.Type)
                 {
-                    case 1:
+                    case 1: // 2-node line
+                        // We'll need to locate the edge via the nodes and assign the first tag ID to AttribID
+                        // Actually, we can't be sure the edge has been created yet, so I think we'll need to push 
+                        // these back onto a list and process in a separate step.
+                        postProcessElements.Add(elem);
                         break;
-                    case 2: 
+                    case 2:  // 3-node triangle
                         if (elem.Nodes.Count != 3) throw new Exception("Expected three nodes");
                         MeshFace newFace = new MeshFace();
                         MeshHalfEdge edge1 = new MeshHalfEdge();
@@ -72,12 +80,22 @@ namespace MeshLib
                         HalfEdges.Add(edge2);
                         HalfEdges.Add(edge3);
                         newFace.HalfEdge = edge1;
+                        if (elem.Tags.Count > 0)
+                        {
+                            newFace.AttribID = elem.Tags[0];
+                        }
                         Faces.Add(newFace);
+                        break;
+                    case 15: // 1-node point
+                        // Find the node, slap on the AttribID
+                        // Same as for edges. Need to just push the node onto a list and process after
+                        postProcessElements.Add(elem);
                         break;
                     default:
                         throw new NotImplementedException("Unrecognized element type");
                 }
             }
+            // Fix-up the half edges
             foreach (var halfEdge in HalfEdges)
             {
                 if (halfEdge.OppHalfEdge != null)
@@ -96,6 +114,72 @@ namespace MeshLib
                     }
                 }
             }
+            // Process the tags for edges and nodes
+            foreach (var elem in postProcessElements)
+            {
+                if (elem.Tags.Count > 0)
+                {
+                    if (elem.Type == 1)
+                    {
+                        uint n1 = (uint)elem.Nodes[0];
+                        uint n2 = (uint)elem.Nodes[1];
+                        foreach (var halfEdge in HalfEdges)
+                        {
+                            if (((halfEdge.PrevVertex.ID == n1) && (halfEdge.NextVertex.ID == n2)) || ((halfEdge.PrevVertex.ID == n2) && (halfEdge.NextVertex.ID == n1)))
+                            {
+                                halfEdge.AttribID = elem.Tags[0];
+                                halfEdge.OppHalfEdge.AttribID = elem.Tags[0];
+                            }
+                        }
+                    }
+                    else if (elem.Type == 15)
+                    {
+                        uint n1 = (uint)elem.Nodes[0];
+                        foreach (var vertex in Vertices)
+                        {
+                            if (vertex.ID == n1)
+                            {
+                                vertex.Node.AttribID = elem.Tags[0];
+                            }
+                        }
+                    }
+                    else { throw new Exception("Unexpected element type"); }
+                }
+            }
+        }
+
+        public void WriteToTriangleFiles(string path, string file_root)
+        {
+            throw new NotImplementedException();
+            // Write .node file
+            string nodeFilePath = Path.Combine(path, $"{file_root}.node");
+            using (StreamWriter writer = new StreamWriter(nodeFilePath))
+            {
+                writer.WriteLine($"{Nodes.Count} 2 0 1"); // NumNodes, Dimension, Attributes, BoundaryMarkerCount
+                foreach (var node in Nodes)
+                {
+                    writer.WriteLine($"{node.ID} {node.X} {node.Y} {node.AttribID}");
+                }
+            }
+
+            // Write .ele file
+            string eleFilePath = Path.Combine(path, $"{file_root}.ele");
+            using (StreamWriter writer = new StreamWriter(eleFilePath))
+            {
+                writer.WriteLine($"{Faces.Count} 3 1"); // NumElements, NodesPerElement, Attributes
+                foreach (var face in Faces)
+                {
+                    MeshNode n1 = face.HalfEdge.NextVertex.Node;
+                    MeshNode n2 = face.HalfEdge.NextHalfEdge.NextVertex.Node;
+                    MeshNode n3 = face.HalfEdge.NextHalfEdge.NextHalfEdge.NextVertex.Node;
+                    writer.WriteLine($"{face.ID} {n1.ID} {n2.ID} {n3.ID} {face.AttribID}");
+                }
+            }
+
+        }
+
+        public void ReadFromTriangleFiles(string path) {
+            throw new NotImplementedException(); 
         }
 
     }
