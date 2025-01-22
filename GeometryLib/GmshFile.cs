@@ -1,17 +1,10 @@
 // Copyright 2023, T. C. Raymond
 // SPDX-License-Identifier: MIT
 
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.Design;
 using System.Diagnostics;
-using System.Drawing;
-using System.IO;
-using System.Net;
-using System.Security.Cryptography;
+using System.Text;
 using MathNet.Numerics;
-using MathNet.Numerics.LinearAlgebra;
-using MathNet.Numerics.LinearAlgebra.Double;
+using MeshLib;
 
 namespace TDAP
 {
@@ -439,6 +432,54 @@ namespace TDAP
 
             sw.WriteLine("Mesh.MshFileVersion = 2;");
             sw.Close();
+        }
+
+        public Mesh GenerateMesh(double meshscale = 1.0, int meshorder = 1)
+        {
+            string gmshPath = "./bin/gmsh.exe";
+
+            writeFile();
+
+            var sb = new StringBuilder();
+            Process p = new Process();
+
+            p.StartInfo.FileName = gmshPath;
+            p.StartInfo.Arguments = $"{Filename} -2 -order {meshorder} -clscale {meshscale} -v 3";
+            p.StartInfo.CreateNoWindow = true;
+
+            // redirect the output
+            p.StartInfo.RedirectStandardOutput = true;
+            p.StartInfo.RedirectStandardError = true;
+
+            // hookup the eventhandlers to capture the data that is received
+            p.OutputDataReceived += (sender, args) => sb.AppendLine(args.Data);
+            p.ErrorDataReceived += (sender, args) => sb.AppendLine(args.Data);
+
+            // direct start
+            p.StartInfo.UseShellExecute = false;
+
+            p.Start();
+
+            // start our event pumps
+            p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
+
+            // until we are done
+            p.WaitForExit();
+
+            string output = sb.ToString();
+
+            int return_code = p.ExitCode;
+            if (return_code != 0)
+            {
+                throw new Exception($"Failed to run gmsh");
+            }
+            else
+            {
+                Mesh mesh = new Mesh();
+                mesh.ReadFromMSH2File(Filename[0..^3] + "msh");
+                return mesh;
+            }
         }
     }
 
