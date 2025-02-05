@@ -1,6 +1,7 @@
 ﻿// Copyright 2023, T. C. Raymond
 // SPDX-License-Identifier: MIT
 
+using MathNet.Numerics.Distributions;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,6 +11,8 @@ using System.Reflection.Emit;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using CliWrap;
+using netDxf.Entities;
 
 namespace TDAP
 {
@@ -27,14 +30,22 @@ namespace TDAP
         axisymmetric
     }
 
+    // 0 = constant value of A
+    // 1 = Small skin depth eddy current BC
+    // 2 = Mixed BC
+    // 3 = SDI boundary (deprecated)
+    // 4 = Periodic
+    // 5 = Antiperiodic
+    // 6 = Periodic AGE
+    // 7 = Antiperiodic AGE
     public enum FEMMBdryType
     {
-        prescribedA=1,
-        smallSkinDepth=2,
-        mixed=3,
-        strategicDualImage=4,
-        periodic=5,
-        antiPeriodic=6
+        prescribedA=0,
+        smallSkinDepth=1,
+        mixed=2,
+        strategicDualImage=3,
+        periodic=4,
+        antiPeriodic=5
     }
 
     public static class EnumerationExtensions
@@ -55,27 +66,37 @@ namespace TDAP
         public FEMMLengthUnit LengthUnits { get; set; } = FEMMLengthUnit.meters;
         public string Coordinates { get; set; } = "cartesian";
         public FEMMProblemType ProblemType { get; set; } = FEMMProblemType.axisymmetric;
-        public double ExtZo {  get; set; }
+        public double ExtZo { get; set; }
         public double ExtRo { get; set; }
         public double ExtRi { get; set; }
         public string Comment { get; set; } = "";
 
-        List<FEMMPointProp> PointProps { get; set; } = new List<FEMMPointProp>();
-        List<FEMMBdryProp> BdryProps { get; set; } = new List<FEMMBdryProp>();
-        List<FEMMBlockProp> BlockProps { get; set; } = new List<FEMMBlockProp>();
-        List<FEMMCircuitProp> CircuitProps { get; set; } = new List<FEMMCircuitProp>();
+        public List<FEMMPointProp> PointProps { get; set; } = new List<FEMMPointProp>();
+        public List<FEMMBdryProp> BdryProps { get; set; } = new List<FEMMBdryProp>();
+        public List<FEMMBlockProp> BlockProps { get; set; } = new List<FEMMBlockProp>();
+        public FEMMCircuitProp[] CircuitProps { get; set; }
 
         List<FEMMPoint> Points { get; set; } = new List<FEMMPoint>();
         List<FEMMSegment> Segments { get; set; } = new List<FEMMSegment>();
         List<FEMMArcSegment> ArcSegments { get; set; } = new List<FEMMArcSegment>();
         List<FEMMHole> Holes { get; set; } = new List<FEMMHole>();
-        List<FEMMBlockLabel> BlockLabels { get; set; } = new List<FEMMBlockLabel>();
+        FEMMBlockLabel[] BlockLabels { get; set; }
 
         public void CreateFromGeometry(Geometry geometry, Dictionary<int, int> blockMap, Dictionary<int, int> circMap)
         {
             Points.Clear();
             Segments.Clear();
             ArcSegments.Clear();
+
+            var maxAttribID = geometry.Surfaces.Max(s => s.AttribID);
+            BlockLabels = Enumerable.Range(0, maxAttribID)
+                               .Select(_ => new FEMMBlockLabel())
+                               .ToArray();
+
+            var maxCircID = circMap.Max(s => s.Value);
+            CircuitProps = Enumerable.Range(0, maxCircID+1)
+                               .Select(_ => new FEMMCircuitProp())
+                               .ToArray();
 
             foreach (var point in geometry.Points)
             {
@@ -84,17 +105,17 @@ namespace TDAP
 
             foreach (var line in geometry.Lines)
             {
-                CreateNewSegment(line.pt1, line.pt2);
+                CreateNewSegment(line.pt1, line.pt2, line.AttribID > 0 ? line.AttribID : 0);
             }
 
             foreach (var arc in geometry.Arcs)
             {
-                CreateNewArcSegment(arc.EndPt, arc.StartPt, arc.SweepAngle*180.0/Math.PI);
+                CreateNewArcSegment(arc.EndPt, arc.StartPt, -arc.SweepAngle * 180.0 / Math.PI, arc.AttribID > 0 ? arc.AttribID : 0);
             }
 
             foreach (var loop in geometry.LineLoops)
             {
-                
+
             }
 
             foreach (var surface in geometry.Surfaces)
@@ -105,7 +126,7 @@ namespace TDAP
 
         public FEMMPoint CreateNewPoint(double x, double y)
         {
-            var newPt = new FEMMPoint(x, y);
+            var newPt = new FEMMPoint(x, y, 0, 1);
             Points.Add(newPt);
             return newPt;
         }
@@ -132,11 +153,11 @@ namespace TDAP
             return newSeg;
         }
 
-        public FEMMArcSegment CreateNewArcSegment(GeomPoint startPt, GeomPoint endPt, double sweepAngle)
+        public FEMMArcSegment CreateNewArcSegment(GeomPoint startPt, GeomPoint endPt, double sweepAngle, int bdryID = 0)
         {
             int idxSt = FindPoint(startPt.x, startPt.y);
             int idxEnd = FindPoint(endPt.x, endPt.y);
-            var newArc = new FEMMArcSegment(idxSt, idxEnd, sweepAngle);
+            var newArc = new FEMMArcSegment(idxSt, idxEnd, sweepAngle, 10, bdryID);
             ArcSegments.Add(newArc);
             return newArc;
         }
@@ -144,7 +165,7 @@ namespace TDAP
         public FEMMBlockLabel CreateNewBlockLabel(GeomSurface surface, Dictionary<int, int> blockMap, Dictionary<int, int> circMap)
         {
             GeomPoint pt = surface.GetRandomPointInSurface();
-            int blockID = 0;
+            int blockID = -1;
             int circID = 0;
             if (blockMap.ContainsKey(surface.AttribID))
             {
@@ -152,19 +173,37 @@ namespace TDAP
             }
             if (circMap.ContainsKey(surface.AttribID))
             {
-                //circID = circMap[surface.AttribID];
+                circID = circMap[surface.AttribID]+1;
+            }
+            if (blockID < 0)
+            {
+                System.Diagnostics.Debugger.Break();
             }
 
-            var newBlockLabel = new FEMMBlockLabel(pt.x, pt.y, blockID, 0, circID, 0, 0, 1, false);
-            BlockLabels.Add(newBlockLabel);
+            if (circID > 0)
+            {
+                var newCircuit = new FEMMCircuitProp();
+                newCircuit.CircuitName = $"Circuit {circID}";
+                CircuitProps[circID-1] = newCircuit;
+            }
+            // Have to add one to blockID because FEMM subtracts one off (presumably expects 1-based index)
+            var newBlockLabel = new FEMMBlockLabel(pt.x, pt.y, blockID + 1, -1, circID, 0, 0, 1, false);
+            BlockLabels[surface.AttribID - 1] = newBlockLabel;
             return newBlockLabel;
+        }
+
+        public int CreateNewBdryProp(string name)
+        {
+            var newBdryProp = new FEMMBdryProp() { BdryName = name };
+            BdryProps.Add(newBdryProp);
+            return BdryProps.Count - 1;
         }
 
         public int CreateNewBlockProp(string name)
         {
             var newBlockProp = new FEMMBlockProp() { BlockName = name };
             BlockProps.Add(newBlockProp);
-            return BlockProps.Count;
+            return BlockProps.Count - 1;
         }
 
         public void ToFile(string fileName)
@@ -203,7 +242,7 @@ namespace TDAP
                     sw.Write(blockProp.ToString());
                 }
 
-                sw.WriteLine($"[CircuitProps]   = {CircuitProps.Count}");
+                sw.WriteLine($"[CircuitProps]   = {CircuitProps.Length}");
                 foreach (var circuitProp in CircuitProps)
                 {
                     sw.Write(circuitProp.ToString());
@@ -233,7 +272,7 @@ namespace TDAP
                     sw.WriteLine(hole.ToString());
                 }
 
-                sw.WriteLine($"[NumBlockLabels] = {BlockLabels.Count}");
+                sw.WriteLine($"[NumBlockLabels] = {BlockLabels.Length}");
                 foreach (var block in BlockLabels)
                 {
                     sw.WriteLine(block.ToString());
@@ -241,478 +280,14 @@ namespace TDAP
             }
         }
 
-        // Replaces the portion of the code that writes .poly and .pbc files.
-        //public bool GeneratePolyAndPbcFiles()
-        //{
-        //    // local variables
-        //    int i, j, k, l, t;
-        //    double z, R, dL;
-        //    Complex a0, a1, a2, c;
+        public void GenerateMesh()
+        {
+            using var stdOut = Console.OpenStandardOutput();
+            using var stdErr = Console.OpenStandardError();
 
-        //    // Suppose bSmartMesh is read from "theApp.session_SmartMesh"
-        //    int bSmartMesh = MyApp.session_SmartMesh;
-        //    if (bSmartMesh < 0) bSmartMesh = SmartMesh;
-
-        //    // We’ll create new lists for the meshing process:
-        //    List<FEMMPoint> nodelst = new List<FEMMPoint>();
-        //    List<FEMMSegment> linelst = new List<FEMMSegment>();
-
-        //    nodelst.Clear();
-        //    linelst.Clear();
-
-        //    // ===============================
-        //    // 1) Compute dL for “kludge fine meshing near corners”
-        //    // ===============================
-        //    z = 0.0;
-        //    for (i = 0; i < Segments.Count; i++)
-        //    {
-        //        a0 = new Complex(Points[Segments[i].StartPt].X, Points[Segments[i].StartPt].Y);
-        //        a1 = new Complex(Points[Segments[i].EndPt].X, Points[Segments[i].EndPt].Y);
-        //        double length = (a1 - a0).Magnitude;   // = abs(a1 - a0)
-        //        z += (length / Segments.Count);
-        //    }
-        //    dL = z / LineFraction;
-
-        //    // ===============================
-        //    // 2) Copy node list as-is
-        //    // ===============================
-        //    for (i = 0; i < Points.Count; i++)
-        //    {
-        //        nodelst.Add(Points[i]);
-        //    }
-
-        //    // ===============================
-        //    // 3) Discretize input segments
-        //    // ===============================
-        //    for (i = 0; i < Segments.Count; i++)
-        //    {
-        //        a0 = new Complex(Points[Segments[i].StartPt].X, Points[Segments[i].StartPt].Y);
-        //        a1 = new Complex(Points[Segments[i].EndPt].X, Points[Segments[i].EndPt].Y);
-
-        //        double length = (a1 - a0).Magnitude;
-
-        //        // if MaxSideLength = -1 => k=1
-        //        if (Segments[i].BoundaryMarker == null) Segments[i].BoundaryMarker = "";
-
-        //        if (/* replace with your condition for MaxSideLength == -1 */ false)
-        //        {
-        //            k = 1;
-        //        }
-        //        else
-        //        {
-        //            double maxSideLength = /* you must store or retrieve from the segment somehow */ 10.0;
-        //            k = (int)Math.Ceiling(length / maxSideLength);
-        //        }
-
-        //        if (k == 1)
-        //        {
-        //            // default condition
-        //            if ((length < (3.0 * dL)) || (bSmartMesh == 0))
-        //            {
-        //                // line is too short to subdivide or meshing turned off
-        //                linelst.Add(Segments[i]);
-        //            }
-        //            else
-        //            {
-        //                // add extra points near the ends
-        //                FEMMSegment segm = new FEMMSegment
-        //                {
-        //                    BoundaryMarker = Segments[i].BoundaryMarker
-        //                };
-
-        //                // we subdivide into 3 segments around the ends
-        //                for (j = 0; j < 3; j++)
-        //                {
-        //                    if (j == 0)
-        //                    {
-        //                        // first extra point
-        //                        a2 = a0 + dL * (a1 - a0) / length;
-
-        //                        CNode node = new CNode
-        //                        {
-        //                            x = a2.Real,
-        //                            y = a2.Imaginary
-        //                        };
-        //                        l = nodelst.Count;
-        //                        nodelst.Add(node);
-
-        //                        segm.n0 = linelist[i].n0;
-        //                        segm.n1 = l;
-        //                        linelst.Add(new CSegment
-        //                        {
-        //                            n0 = segm.n0,
-        //                            n1 = segm.n1,
-        //                            BoundaryMarker = segm.BoundaryMarker
-        //                        });
-        //                    }
-        //                    else if (j == 1)
-        //                    {
-        //                        // second extra point
-        //                        a2 = a1 + dL * (a0 - a1) / length;
-
-        //                        CNode node = new CNode
-        //                        {
-        //                            x = a2.Real,
-        //                            y = a2.Imaginary
-        //                        };
-        //                        l = nodelst.Count;
-        //                        nodelst.Add(node);
-
-        //                        segm.n0 = l - 1;
-        //                        segm.n1 = l;
-        //                        linelst.Add(new CSegment
-        //                        {
-        //                            n0 = segm.n0,
-        //                            n1 = segm.n1,
-        //                            BoundaryMarker = segm.BoundaryMarker
-        //                        });
-        //                    }
-        //                    else
-        //                    {
-        //                        // connect last new point to the original endpoint
-        //                        l = nodelst.Count - 1;
-        //                        segm.n0 = l;
-        //                        segm.n1 = linelist[i].n1;
-        //                        linelst.Add(new CSegment
-        //                        {
-        //                            n0 = segm.n0,
-        //                            n1 = segm.n1,
-        //                            BoundaryMarker = segm.BoundaryMarker
-        //                        });
-        //                    }
-        //                }
-        //            }
-        //        }
-        //        else
-        //        {
-        //            // subdivide into k segments
-        //            CSegment segm = new CSegment
-        //            {
-        //                BoundaryMarker = linelist[i].BoundaryMarker
-        //            };
-
-        //            for (j = 0; j < k; j++)
-        //            {
-        //                double fraction = (double)(j + 1) / (double)k;
-        //                a2 = a0 + (a1 - a0) * fraction;
-
-        //                CNode node = new CNode
-        //                {
-        //                    x = a2.Real,
-        //                    y = a2.Imaginary
-        //                };
-
-        //                if (j == 0)
-        //                {
-        //                    // first subdivision
-        //                    int newNodeIndex = nodelst.Count;
-        //                    nodelst.Add(node);
-
-        //                    segm.n0 = linelist[i].n0;
-        //                    segm.n1 = newNodeIndex;
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = segm.n0,
-        //                        n1 = segm.n1,
-        //                        BoundaryMarker = segm.BoundaryMarker
-        //                    });
-        //                }
-        //                else if (j == (k - 1))
-        //                {
-        //                    // last subdivision
-        //                    int newNodeIndex = nodelst.Count - 1;
-        //                    segm.n0 = newNodeIndex;
-        //                    segm.n1 = linelist[i].n1;
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = segm.n0,
-        //                        n1 = segm.n1,
-        //                        BoundaryMarker = segm.BoundaryMarker
-        //                    });
-        //                }
-        //                else
-        //                {
-        //                    // intermediate subdivision
-        //                    int newNodeIndex = nodelst.Count;
-        //                    int prevNodeIndex = newNodeIndex - 1; // after adding
-
-        //                    nodelst.Add(node);
-
-        //                    segm.n0 = prevNodeIndex;
-        //                    segm.n1 = newNodeIndex;
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = segm.n0,
-        //                        n1 = segm.n1,
-        //                        BoundaryMarker = segm.BoundaryMarker
-        //                    });
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    // ===============================
-        //    // 4) Discretize input arc segments
-        //    // ===============================
-        //    for (i = 0; i < arclist.Count; i++)
-        //    {
-        //        // set “mySideLength” from “MaxSideLength”
-        //        arclist[i].mySideLength = arclist[i].MaxSideLength;
-
-        //        // number of subdivisions
-        //        int n0Index = arclist[i].n0;
-        //        int n1Index = arclist[i].n1;
-
-        //        a2 = new Complex(nodelist[n0Index].x, nodelist[n0Index].y);
-
-        //        // figure out how many pieces
-        //        k = (int)Math.Ceiling(arclist[i].ArcLength / arclist[i].MaxSideLength);
-
-        //        // boundary marker
-        //        CSegment arcSeg = new CSegment();
-        //        arcSeg.BoundaryMarker = arclist[i].BoundaryMarker;
-
-        //        // get circle center & radius
-        //        GetCircle(arclist[i], out c, out R);
-
-        //        // a1 = exp( i * (arcLength / k in radians) )
-        //        // arclist[i].ArcLength is presumably in degrees, so multiply by π/180
-        //        // If arcLength is in degrees:
-        //        double anglePerSub = arclist[i].ArcLength * Math.PI / (k * 180.0);
-        //        Complex multiplier = Complex.Exp(Complex.ImaginaryOne * anglePerSub);
-
-        //        if (k == 1)
-        //        {
-        //            // just one segment connecting n0 => n1
-        //            arcSeg.n0 = n0Index;
-        //            arcSeg.n1 = n1Index;
-        //            linelst.Add(arcSeg);
-        //        }
-        //        else
-        //        {
-        //            for (j = 0; j < k; j++)
-        //            {
-        //                // rotate vector (a2 - c) by multiplier
-        //                a2 = (a2 - c) * multiplier + c;
-
-        //                CNode node = new CNode
-        //                {
-        //                    x = a2.Real,
-        //                    y = a2.Imaginary
-        //                };
-
-        //                if (j == 0)
-        //                {
-        //                    int newIndex = nodelst.Count;
-        //                    nodelst.Add(node);
-
-        //                    arcSeg.n0 = n0Index;
-        //                    arcSeg.n1 = newIndex;
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = arcSeg.n0,
-        //                        n1 = arcSeg.n1,
-        //                        BoundaryMarker = arcSeg.BoundaryMarker
-        //                    });
-        //                }
-        //                else if (j == (k - 1))
-        //                {
-        //                    int lastIndex = nodelst.Count - 1;
-        //                    arcSeg.n0 = lastIndex;
-        //                    arcSeg.n1 = n1Index;
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = arcSeg.n0,
-        //                        n1 = arcSeg.n1,
-        //                        BoundaryMarker = arcSeg.BoundaryMarker
-        //                    });
-        //                }
-        //                else
-        //                {
-        //                    int newIndex = nodelst.Count;
-        //                    nodelst.Add(node);
-
-        //                    arcSeg.n0 = newIndex - 1;   // the previously added node
-        //                    arcSeg.n1 = newIndex;      // this new node
-        //                    linelst.Add(new CSegment
-        //                    {
-        //                        n0 = arcSeg.n0,
-        //                        n1 = arcSeg.n1,
-        //                        BoundaryMarker = arcSeg.BoundaryMarker
-        //                    });
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    // ===============================
-        //    // 5) Build the output .poly filename
-        //    // ===============================
-        //    string pn = GetPathName();
-        //    int dotPos = pn.LastIndexOf('.');
-        //    if (dotPos < 0) dotPos = pn.Length; // if no extension
-        //    string plyname = pn.Substring(0, dotPos) + ".poly";
-
-        //    // Try to open the .poly file
-        //    StreamWriter writer;
-        //    try
-        //    {
-        //        writer = new StreamWriter(plyname);
-        //    }
-        //    catch
-        //    {
-        //        Console.WriteLine("Couldn't write to specified .poly file");
-        //        return false;
-        //    }
-
-        //    // ===============================
-        //    // 6) Write out the node list
-        //    // ===============================
-        //    writer.WriteLine("{0}\t2\t0\t1", nodelst.Count);
-
-        //    for (i = 0; i < nodelst.Count; i++)
-        //    {
-        //        // find property index
-        //        t = 0;
-        //        for (j = 0; j < BdryProps.Count; j++)
-        //        {
-        //            if (PointProps[j].PointName == nodelst[i].BoundaryMarker)
-        //            {
-        //                t = j + 2;
-        //                break;
-        //            }
-        //        }
-        //        writer.WriteLine("{0}\t{1:F17}\t{2:F17}\t{3}", i, nodelst[i].X, nodelst[i].Y, t);
-        //    }
-
-        //    // ===============================
-        //    // 7) Write out segment list
-        //    // ===============================
-        //    writer.WriteLine("{0}\t1", linelst.Count);
-
-        //    for (i = 0; i < linelst.Count; i++)
-        //    {
-        //        t = 0;
-        //        for (j = 0; j < lineproplist.Count; j++)
-        //        {
-        //            if (BdryProps[j].BdryName == linelst[i].BoundaryMarker)
-        //            {
-        //                t = -(j + 2);
-        //                break;
-        //            }
-        //        }
-        //        writer.WriteLine("{0}\t{1}\t{2}\t{3}", i, linelst[i].n0, linelst[i].n1, t);
-        //    }
-
-        //    // ===============================
-        //    // 8) Write out list of holes (block labels with <No Mesh>)
-        //    // ===============================
-        //    int holeCount = 0;
-        //    for (i = 0; i < blocklist.Count; i++)
-        //    {
-        //        if (blocklist[i].BlockType == "<No Mesh>") holeCount++;
-        //    }
-        //    writer.WriteLine(holeCount);
-
-        //    int holeIndex = 0;
-        //    for (i = 0; i < blocklist.Count; i++)
-        //    {
-        //        if (blocklist[i].BlockType == "<No Mesh>")
-        //        {
-        //            writer.WriteLine("{0}\t{1:F17}\t{2:F17}",
-        //                             holeIndex, blocklist[i].x, blocklist[i].y);
-        //            holeIndex++;
-        //        }
-        //    }
-
-        //    // ===============================
-        //    // 9) Calculate a default mesh size for other block labels
-        //    // ===============================
-        //    double DefaultMeshSize;
-        //    if (nodelst.Count > 1)
-        //    {
-        //        // find bounding box
-        //        double minX = nodelst[0].x, maxX = nodelst[0].x;
-        //        double minY = nodelst[0].y, maxY = nodelst[0].y;
-        //        for (k = 1; k < nodelst.Count; k++)
-        //        {
-        //            if (nodelst[k].x < minX) minX = nodelst[k].x;
-        //            if (nodelst[k].x > maxX) maxX = nodelst[k].x;
-        //            if (nodelst[k].y < minY) minY = nodelst[k].y;
-        //            if (nodelst[k].y > maxY) maxY = nodelst[k].y;
-        //        }
-
-        //        double width = (maxX - minX);
-        //        double height = (maxY - minY);
-        //        double diag = Math.Sqrt(width * width + height * height);
-
-        //        // For demonstration, the original code did: pow(abs(yy-xx)/BoundingBoxFraction,2)
-        //        // We'll interpret that as:
-        //        DefaultMeshSize = Math.Pow(diag / BoundingBoxFraction, 2.0);
-
-        //        if (bSmartMesh == 0)
-        //        {
-        //            // or if !bSmartMesh => fallback
-        //            DefaultMeshSize = diag;
-        //        }
-        //    }
-        //    else
-        //    {
-        //        DefaultMeshSize = -1;
-        //    }
-
-        //    // ===============================
-        //    // 10) Write out regional attributes for non-hole blocks
-        //    // ===============================
-        //    int nonHoleCount = blocklist.Count - holeCount;
-        //    writer.WriteLine(nonHoleCount);
-
-        //    int blockIndex = 0;
-        //    for (i = 0; i < blocklist.Count; i++)
-        //    {
-        //        if (blocklist[i].BlockType != "<No Mesh>")
-        //        {
-        //            writer.Write("{0}\t{1:F17}\t{2:F17}\t",
-        //                         blockIndex, blocklist[i].x, blocklist[i].y);
-        //            // some ID (k+1 in original):
-        //            writer.Write("{0}\t", blockIndex + 1);
-
-        //            // max area if specified
-        //            if ((blocklist[i].MaxArea > 0) && (blocklist[i].MaxArea < DefaultMeshSize))
-        //            {
-        //                writer.WriteLine("{0:F17}", blocklist[i].MaxArea);
-        //            }
-        //            else
-        //            {
-        //                writer.WriteLine("{0:F17}", DefaultMeshSize);
-        //            }
-        //            blockIndex++;
-        //        }
-        //    }
-
-        //    writer.Close(); // done with .poly
-
-        //    // ===============================
-        //    // 11) Write out a trivial .pbc file
-        //    // ===============================
-        //    string pbcname = pn.Substring(0, dotPos) + ".pbc";
-        //    try
-        //    {
-        //        using (StreamWriter sw = new StreamWriter(pbcname))
-        //        {
-        //            sw.WriteLine("0");
-        //            sw.WriteLine("0");
-        //        }
-        //    }
-        //    catch
-        //    {
-        //        MsgBox("Couldn't write to specified .pbc file");
-        //        return false;
-        //    }
-
-        //    // If everything succeeded:
-        //    return true;
-        //}
+            var cmd = Cli.Wrap("foo") | (stdOut, stdErr);
+            cmd.ExecuteAsync();
+        }
     }
 
     public class FEMMPointProp
@@ -746,7 +321,7 @@ namespace TDAP
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("  <BeginBdry>");
             sb.AppendLine($"    <BdryName> = {BdryName}");
-            sb.AppendLine($"    <BdryType> = {BdryType}");
+            sb.AppendLine($"    <BdryType> = {(int)BdryType}");
             sb.AppendLine($"    <A_0> = {A_0}");
             sb.AppendLine($"    <A_1> = {A_1}");
             sb.AppendLine($"    <A_2> = {A_2}");
@@ -767,22 +342,22 @@ namespace TDAP
     public class FEMMBlockProp
     {
         public string BlockName { get; set; }
-        public double Mu_x { get; set; }
-        public double Mu_y { get; set; }
-        public double H_c { get; set; }
-        public double H_cAngle { get; set; }
-        public double J_re { get; set; }
-        public double J_im { get; set; }
-        public double Sigma { get; set; }
-        public double d_lam { get; set; }
-        public double Phi_h { get; set; }
-        public double Phi_hx { get; set; }
-        public double Phi_hy { get; set; }
-        public int LamType { get; set; }
-        public int LamFill { get; set; }
-        public int NStrands { get; set; }
-        public double WireD { get; set; }
-        public int BHPoints { get; set; }
+        public double Mu_x { get; set; } = 1.0;
+        public double Mu_y { get; set; } = 1.0;
+        public double H_c { get; set; } = 0;
+        public double H_cAngle { get; set; } = 0;
+        public double J_re { get; set; } = 0;
+        public double J_im { get; set; } = 0;
+        public double Sigma { get; set; } = 0;
+        public double d_lam { get; set; } = 0;
+        public double Phi_h { get; set; } = 0;
+        public double Phi_hx { get; set; } = 0;
+        public double Phi_hy { get; set; } = 0;
+        public int LamType { get; set; } = 0;
+        public int LamFill { get; set; } = 1;
+        public int NStrands { get; set; } = 0;
+        public double WireD { get; set; } = 0;
+        public int BHPoints { get; set; } = 0;
 
         public override string ToString()
         {
@@ -822,7 +397,7 @@ namespace TDAP
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("  <BeginCircuit>");
             sb.AppendLine($"    <CircuitName> = {CircuitName}");
-            sb.AppendLine($"    <type> = {CircuitType}");
+            sb.AppendLine($"    <CircuitType> = {CircuitType}");
             sb.AppendLine($"    <TotalAmps_re> = {TotalAmps_re}");
             sb.AppendLine($"    <TotalAmps_im> = {TotalAmps_im}");
             sb.AppendLine("  <EndCircuit>");
@@ -856,11 +431,11 @@ namespace TDAP
         public int StartPt { get; set; }
         public int EndPt { get; set; }
         public double MeshSize { get; set; }
-        public int BdryProp { get; set; }
+        public int BdryProp { get; set; } = -1;
         public int HideInPost { get; set; }
         public int GroupNum  { get; set; }
 
-        public FEMMSegment(int startPt, int endPt, double meshSize=-1, int bdryProp=0, int hideInPost=0, int groupNum=1)
+        public FEMMSegment(int startPt, int endPt, double meshSize=-1, int bdryProp=-1, int hideInPost=0, int groupNum=1)
         {
             StartPt = startPt;
             EndPt = endPt;
@@ -927,12 +502,14 @@ namespace TDAP
         public double LabelX { get; set; }
         public double LabelY { get; set; }
         public int BlockType { get; set; }
-        public double MeshSize { get; set; }
+        public double MeshSize { get; set; } = -1;
         public int Circuit { get; set; } = 0;
         public double MagDir { get; set; }
-        public int GroupNum { get; set; }
+        public int GroupNum { get; set; } = 0;
         public int NumTurns { get; set; } = 1;
         public bool IsExternal { get; set; } = false;
+
+        public FEMMBlockLabel() { }
 
         public FEMMBlockLabel(double labelX, double labelY, int blockType, double meshSize, int circuit, double magDir, int groupNum, int numTurns, bool isExternal)
         {
@@ -949,7 +526,7 @@ namespace TDAP
 
         public override string ToString()
         {
-            return $"{LabelX}\t{LabelY}\t{BlockType}\t{MeshSize}\t{Circuit}\t{MagDir}\t{GroupNum}\t{NumTurns}\t{(IsExternal ? 0 : 1)}";
+            return $"{LabelX}\t{LabelY}\t{BlockType}\t{MeshSize}\t{Circuit}\t{MagDir}\t{GroupNum}\t{NumTurns}\t0";/*{(IsExternal ? 0 : 1)}*/
         }
     }
 }

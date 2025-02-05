@@ -19,17 +19,17 @@ namespace MeshLib
 
         private Dictionary<(int, int), MeshHalfEdge> edgeDict = new();
 
-        public List<(MeshVertex, MeshVertex)> GetUniqueEdges()
+        public List<(MeshVertex, MeshVertex, int)> GetUniqueEdges()
         {
-            var edgeSet = new HashSet<(MeshVertex, MeshVertex)>();
+            var edgeSet = new HashSet<(MeshVertex, MeshVertex, int)>();
             foreach (var he in HalfEdges)
             {
                 var vStart = he.PrevVertex;
                 var vEnd = he.NextVertex;
                 // Add an ordered pair so that we ignore duplicates
                 if (vStart == null || vEnd == null) continue;
-                var forward = (vStart, vEnd);
-                var backward = (vEnd, vStart);
+                var forward = (vStart, vEnd, he.AttribID);
+                var backward = (vEnd, vStart, he.AttribID);
                 if (!edgeSet.Contains(forward) && !edgeSet.Contains(backward))
                 {
                     edgeSet.Add(forward);
@@ -45,17 +45,18 @@ namespace MeshLib
 
             // 1) Prepare node/vertex arrays sized by max node ID
             uint maxNodeID = gmshFile.Nodes.Max(n => n.Id);
-            Nodes = new List<MeshNode>(new MeshNode[(int)maxNodeID + 1]);
-            Vertices = new List<MeshVertex>(new MeshVertex[(int)maxNodeID + 1]);
+            Nodes = new List<MeshNode>(new MeshNode[(int)maxNodeID]);
+            Vertices = new List<MeshVertex>(new MeshVertex[(int)maxNodeID]);
 
             // 2) Insert nodes & vertices
+            // IMPORTANT: Gmsh node IDs start at 1, but we want to start at 0
             foreach (var node in gmshFile.Nodes)
             {
-                var newNode = new MeshNode(node.Id, node.X, node.Y, node.Z);
-                var newVert = new MeshVertex(node.Id, newNode);
+                var newNode = new MeshNode(node.Id-1, node.X, node.Y, node.Z);
+                var newVert = new MeshVertex(node.Id-1, newNode);
 
-                Nodes[(int)node.Id] = newNode;
-                Vertices[(int)node.Id] = newVert;
+                Nodes[(int)node.Id-1] = newNode;
+                Vertices[(int)node.Id-1] = newVert;
             }
 
             // We'll store line (type=1) or point (type=15) elements for later
@@ -91,8 +92,9 @@ namespace MeshLib
 
                 if (elem.Type == 1 && elem.Nodes.Count == 2) // line => set Attrib on half-edge
                 {
-                    int v1 = elem.Nodes[0];
-                    int v2 = elem.Nodes[1];
+                    // elem.Nodes are 1-indexed
+                    int v1 = elem.Nodes[0] - 1;
+                    int v2 = elem.Nodes[1] - 1;
                     var he = GetEdgeByVertices(v1, v2);
                     if (he != null)
                     {
@@ -103,7 +105,8 @@ namespace MeshLib
                 }
                 else if (elem.Type == 15 && elem.Nodes.Count == 1) // point => set Attrib on node
                 {
-                    int v = elem.Nodes[0];
+                    // elem.Nodes are 1-indexed
+                    int v = elem.Nodes[0] - 1;
                     if (v >= 0 && v < Nodes.Count && Nodes[v] != null)
                     {
                         Nodes[v].AttribID = elem.Tags[0];
@@ -128,9 +131,11 @@ namespace MeshLib
             Faces.Add(face);
 
             // Pull out the 3 vertices (assume they exist)
-            var v1 = Vertices[elem.Nodes[0]];
-            var v2 = Vertices[elem.Nodes[1]];
-            var v3 = Vertices[elem.Nodes[2]];
+            // Note that Gmsh node IDs start at 1, but we want to start at 0
+            // elem here is a GmshElement, so elem.Nodes is 1-indexed
+            var v1 = Vertices[elem.Nodes[0] - 1];
+            var v2 = Vertices[elem.Nodes[1] - 1];
+            var v3 = Vertices[elem.Nodes[2] - 1];
 
             // Create 3 half-edges
             var e1 = new MeshHalfEdge() { Face = face };
@@ -161,6 +166,7 @@ namespace MeshLib
             HalfEdges.Add(e3);
 
             // Immediately try to link each half-edge's opposite in the dictionary
+            // IDs here are 0-indexed
             LinkOpposite(e1, (int)v1.ID, (int)v2.ID);
             LinkOpposite(e2, (int)v2.ID, (int)v3.ID);
             LinkOpposite(e3, (int)v3.ID, (int)v1.ID);
@@ -169,6 +175,7 @@ namespace MeshLib
         /// <summary>
         /// Attempts to find the opposite half-edge for (start->end).
         /// If found, links them. Otherwise, stores the new half-edge in the dictionary.
+        /// IDs here are 0-indexed.
         /// </summary>
         private void LinkOpposite(MeshHalfEdge he, int startID, int endID)
         {
@@ -263,7 +270,6 @@ namespace MeshLib
 
         public void WriteToTriangleFiles(string path, string file_root)
         {
-            throw new NotImplementedException();
             // Write .node file
             string nodeFilePath = Path.Combine(path, $"{file_root}.node");
             using (StreamWriter writer = new StreamWriter(nodeFilePath))
@@ -271,7 +277,8 @@ namespace MeshLib
                 writer.WriteLine($"{Nodes.Count} 2 0 1"); // NumNodes, Dimension, Attributes, BoundaryMarkerCount
                 foreach (var node in Nodes)
                 {
-                    writer.WriteLine($"{node.ID} {node.X} {node.Y} {node.AttribID}");
+                    if (node == null) continue;
+                    writer.WriteLine($"{node.ID} {node.X} {node.Y} {node.AttribID - 1}");
                 }
             }
 
@@ -285,10 +292,29 @@ namespace MeshLib
                     MeshNode n1 = face.HalfEdge.NextVertex.Node;
                     MeshNode n2 = face.HalfEdge.NextHalfEdge.NextVertex.Node;
                     MeshNode n3 = face.HalfEdge.NextHalfEdge.NextHalfEdge.NextVertex.Node;
+                    if (face.AttribID < -1 || face.AttribID > 1000) System.Diagnostics.Debugger.Break();
+                    // Flip two points to try to produce a mesh that FEMM doesn't hate
                     writer.WriteLine($"{face.ID} {n1.ID} {n2.ID} {n3.ID} {face.AttribID}");
                 }
             }
-
+            // Write .edge file
+            string edgeFilePath = Path.Combine(path, $"{file_root}.edge");
+            using (StreamWriter writer = new StreamWriter(edgeFilePath))
+            {
+                var edges = GetUniqueEdges();
+                writer.WriteLine($"{edges.Count} 1"); // NumEdges, BoundaryMarkerCount
+                int edge_num = 0;
+                foreach (var edge in edges)
+                {
+                    writer.WriteLine($"{edge_num++} {edge.Item1.ID} {edge.Item2.ID} {0}"); //(edge.Item3 > 0 ? -(edge.Item3) : 0)
+                }
+            }
+            // Write blank .pbc file
+            string pbcFilePath = Path.Combine(path, $"{file_root}.pbc");
+            using (StreamWriter writer = new StreamWriter(pbcFilePath))
+            {
+                writer.WriteLine("0");
+            }
         }
 
         public void ReadFromTriangleFiles(string path) {

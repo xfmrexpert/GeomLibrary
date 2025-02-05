@@ -10,6 +10,6 @@ namespace MeshLib
     {
         public uint ID { get; set; }
 
-        public int AttribID { get; set; }
+        public int AttribID { get; set; } = -1;
     }
 }

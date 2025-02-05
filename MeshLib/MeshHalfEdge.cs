@@ -27,17 +27,20 @@ namespace MeshLib
 
         public MeshHalfEdge()
         {
+            AttribID = 0;
             ID = nextID;
             nextID++;
         }
 
         public MeshHalfEdge(uint halfEdgeID)
         {
+            AttribID = 0;
             ID = halfEdgeID;
         }
 
         public MeshHalfEdge(uint halfEdgeID, MeshVertex nextVertex, MeshFace face, MeshHalfEdge nextHalfEdge, MeshHalfEdge oppHalfEdge, MeshHalfEdge prevHalfEdge)
         {
+            AttribID = 0;
             ID = halfEdgeID;
             NextVertex = nextVertex;
             Face = face; 
