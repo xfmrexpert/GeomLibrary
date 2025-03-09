@@ -12,6 +12,9 @@ namespace TDAP
 {
     public class Geometry
     {
+        public int NextLineTag { get; set; } = 0;
+        public int NextSurfaceTag { get; set; } = 0;
+
         public List<GeomPoint> Points { get; private set; } = new List<GeomPoint>();
 
         public List<GeomLine> Lines { get; private set; } = new List<GeomLine>();
@@ -162,33 +165,6 @@ namespace TDAP
             }
 
             return new BoundingBox(minX, minY, maxX, maxY);
-        }
-    }
-
-    // BoundingBox class for encapsulating bounds
-    public class BoundingBox
-    {
-        public double MinX { get; }
-        public double MinY { get; }
-        public double MaxX { get; }
-        public double MaxY { get; }
-
-        public double Width {  get => MaxX - MinX; }
-        public double Height { get => MaxY - MinY; }
-
-        public GeomPoint Center { get => new GeomPoint((MinX + MaxX) / 2, (MinY + MaxY) / 2); }
-
-        public BoundingBox(double minX, double minY, double maxX, double maxY)
-        {
-            MinX = minX;
-            MinY = minY;
-            MaxX = maxX;
-            MaxY = maxY;
-        }
-
-        public override string ToString()
-        {
-            return $"BoundingBox: MinX={MinX}, MinY={MinY}, MaxX={MaxX}, MaxY={MaxY}";
         }
     }
 }
