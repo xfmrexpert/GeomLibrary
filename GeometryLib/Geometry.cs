@@ -12,8 +12,29 @@ namespace TDAP
 {
     public class Geometry
     {
-        public int NextLineTag { get; set; } = 0;
-        public int NextSurfaceTag { get; set; } = 0;
+        public bool RestartNumberingPerDimension { get; set; } = true;
+
+        private int nextLineTag = 0;
+        public int NextLineTag { 
+            get {
+                if (!RestartNumberingPerDimension)
+                {
+                    nextSurfaceTag += 1;
+                }
+                return nextLineTag += 1; 
+            } 
+        }
+
+        private int nextSurfaceTag = 0;
+        public int NextSurfaceTag { 
+            get {
+                if (!RestartNumberingPerDimension)
+                {
+                    nextLineTag += 1;
+                }
+                return nextSurfaceTag+=1; 
+            } 
+        }
 
         public List<GeomPoint> Points { get; private set; } = new List<GeomPoint>();
 
