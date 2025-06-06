@@ -9,10 +9,18 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class GeomLine : GeomEntity
     {
+        public override GeomEntityType Type
+        {
+            get
+            {
+                return GeomEntityType.Line; 
+            }
+        }
+
         public GeomPoint pt1 { get; set; }
         public GeomPoint pt2 { get; set; }
 

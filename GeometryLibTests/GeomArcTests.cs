@@ -1,4 +1,4 @@
-﻿using TDAP;
+﻿using GeometryLib;
 
 namespace GeometryLibTests
 {

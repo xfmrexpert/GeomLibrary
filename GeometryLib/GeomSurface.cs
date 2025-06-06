@@ -7,13 +7,21 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class GeomSurface : GeomEntity
     {
+        public override GeomEntityType Type
+        {
+            get
+            {
+                return GeomEntityType.Surface;
+            }
+        }
+
         public GeomLineLoop Boundary { get; set; }
 
-        public List<GeomLineLoop>? Holes { get; set; } = new List<GeomLineLoop>();
+        public List<GeomLineLoop> Holes { get; set; } = new List<GeomLineLoop>();
 
         public GeomSurface(GeomLineLoop boundary, params GeomLineLoop[] holes)
         {

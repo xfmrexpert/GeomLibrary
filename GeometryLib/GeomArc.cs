@@ -10,7 +10,7 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     // This is presently configured for a circular arc segment.  An open question is whether to extend to an elliptical arc segment.
     // Note that SweepAngle is assumed to proceed clockwise (which may actually be counter-intuitive)
@@ -18,6 +18,15 @@ namespace TDAP
     // TODO: Only need start or end point, not both, if sweep angle is given.
     public class GeomArc : GeomEntity
     {
+        public override GeomEntityType Type
+        {
+            get
+            {
+                return GeomEntityType.Arc; 
+            }
+        }
+
+
         public GeomPoint StartPt { get; set; }
         public GeomPoint EndPt { get; set; }
         public double SweepAngle { get; private set; } // In radians

@@ -11,7 +11,7 @@ using netDxf;
 using netDxf.Entities;
 using netDxf.Tables;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class DxfFile
     {

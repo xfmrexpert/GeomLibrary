@@ -14,7 +14,7 @@ using System.Xml.Linq;
 using CliWrap;
 using netDxf.Entities;
 
-namespace TDAP
+namespace GeometryLib
 {
     public enum FEMMLengthUnit
     {
@@ -88,7 +88,7 @@ namespace TDAP
             Segments.Clear();
             ArcSegments.Clear();
 
-            var maxAttribID = geometry.Surfaces.Max(s => s.AttribID);
+            var maxAttribID = geometry.Surfaces.Max(s => s.Tag);
             BlockLabels = Enumerable.Range(0, maxAttribID)
                                .Select(_ => new FEMMBlockLabel())
                                .ToArray();
@@ -105,12 +105,13 @@ namespace TDAP
 
             foreach (var line in geometry.Lines)
             {
-                CreateNewSegment(line.pt1, line.pt2, line.AttribID > 0 ? line.AttribID : 0);
+                CreateNewSegment(line.pt1, line.pt2, line.Tag > 0 ? line.Tag : 0);
             }
 
             foreach (var arc in geometry.Arcs)
             {
-                CreateNewArcSegment(arc.EndPt, arc.StartPt, -arc.SweepAngle * 180.0 / Math.PI, arc.AttribID > 0 ? arc.AttribID : 0);
+                CreateNewArcSegment(arc.EndPt, arc.StartPt, -arc.SweepAngle * 180.0 / Math.PI, arc.Tag > 0 ? arc.Tag : 0);
+
             }
 
             foreach (var loop in geometry.LineLoops)
@@ -167,13 +168,13 @@ namespace TDAP
             GeomPoint pt = surface.GetRandomPointInSurface();
             int blockID = -1;
             int circID = 0;
-            if (blockMap.ContainsKey(surface.AttribID))
+            if (blockMap.ContainsKey(surface.Tag))
             {
-                blockID = blockMap[surface.AttribID];
+                blockID = blockMap[surface.Tag];
             }
-            if (circMap.ContainsKey(surface.AttribID))
+            if (circMap.ContainsKey(surface.Tag))
             {
-                circID = circMap[surface.AttribID]+1;
+                circID = circMap[surface.Tag]+1;
             }
             if (blockID < 0)
             {
@@ -188,7 +189,7 @@ namespace TDAP
             }
             // Have to add one to blockID because FEMM subtracts one off (presumably expects 1-based index)
             var newBlockLabel = new FEMMBlockLabel(pt.x, pt.y, blockID + 1, -1, circID, 0, 0, 1, false);
-            BlockLabels[surface.AttribID - 1] = newBlockLabel;
+            BlockLabels[surface.Tag - 1] = newBlockLabel;
             return newBlockLabel;
         }
 

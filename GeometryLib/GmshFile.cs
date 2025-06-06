@@ -6,7 +6,7 @@ using System.Text;
 using MathNet.Numerics;
 using MeshLib;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class GmshFile
     {
@@ -260,9 +260,9 @@ namespace TDAP
                 if (pt1 != null && pt2 != null)
                 {
                     var new_line = CreateNewLine(pt1, pt2);
-                    if (line.AttribID > 0)
+                    if (line.Tag > 0)
                     {
-                        physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_line }), line.AttribID));
+                        physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_line }), line.Tag));
                     }
                 }
             }
@@ -286,9 +286,9 @@ namespace TDAP
                 {
                     new_arc = CreateNewArc(endPt, centerPt, startPt);
                 }
-                if (arc.AttribID > 0)
+                if (arc.Tag > 0)
                 {
-                    physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_arc }), arc.AttribID));
+                    physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_arc }), arc.Tag));
                 }
             }
 
@@ -314,9 +314,9 @@ namespace TDAP
                 }
                 if (boundary.Count == 0) System.Diagnostics.Debugger.Break();
                 CreateNewCurveLoop(boundary);
-                if (loop.AttribID > 0)
+                if (loop.Tag > 0)
                 {
-                    physical_curves.Add(new GmshPhysicalCurve(boundary, loop.AttribID));
+                    physical_curves.Add(new GmshPhysicalCurve(boundary, loop.Tag));
                 }
             }
 
@@ -333,9 +333,9 @@ namespace TDAP
                     }
                 }
                 var new_surface = CreateNewSurface(boundary, holes);
-                if (surface.AttribID > 0)
+                if (surface.Tag > 0)
                 {
-                    physical_surfaces.Add(new GmshPhysicalSurface(new_surface, surface.AttribID));
+                    physical_surfaces.Add(new GmshPhysicalSurface(new_surface, surface.Tag));
                 }
             }
         }

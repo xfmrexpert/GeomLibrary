@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     public static class DoubleExtensions
     {

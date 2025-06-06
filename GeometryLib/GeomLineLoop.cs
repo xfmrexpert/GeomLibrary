@@ -8,10 +8,18 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class GeomLineLoop : GeomEntity
     {
+        public override GeomEntityType Type
+        {
+            get
+            {
+                return GeomEntityType.LineLoop;
+            }
+        }
+
         public List<GeomEntity> Boundary { get; set; } = new List<GeomEntity>();
 
         public GeomLineLoop(List<GeomEntity> boundary)

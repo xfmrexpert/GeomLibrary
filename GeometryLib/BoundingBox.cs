@@ -1,7 +1,7 @@
 ﻿// Copyright 2023, T. C. Raymond
 // SPDX-License-Identifier: MIT
 
-namespace TDAP
+namespace GeometryLib
 {
     // BoundingBox class for encapsulating bounds
     public class BoundingBox

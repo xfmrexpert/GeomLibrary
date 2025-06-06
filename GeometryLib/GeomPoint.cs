@@ -7,10 +7,18 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TDAP
+namespace GeometryLib
 {
     public class GeomPoint : GeomEntity, IEquatable<GeomPoint>
     {
+        public override GeomEntityType Type
+        {
+            get
+            {
+                return GeomEntityType.Point;
+            }
+        }
+
         public double x { get; set; }
         public double y { get; set; }
 
