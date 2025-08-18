@@ -62,5 +62,18 @@ namespace GeometryLib
                 }
             }
         }
+
+        public bool ContainsPoint(double x, double y)
+        {
+            var test = new GeomPoint(x, y);
+            if (!Boundary.IsPointInside(test))
+                return false;
+            foreach (var hole in Holes)
+            {
+                if (hole.IsPointInside(test))
+                    return false;
+            }
+            return true;
+        }
     }
 }

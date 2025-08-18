@@ -163,5 +163,16 @@ namespace GeometryLib
 
             return new BoundingBox(minX, minY, maxX, maxY);
         }
+
+        public GeomSurface? HitTestSurface(double x, double y)
+        {
+            // Simple linear search; optimize later with spatial index if needed
+            foreach (var s in Surfaces)
+            {
+                if (s.ContainsPoint(x, y))
+                    return s;
+            }
+            return null;
+        }
     }
 }
