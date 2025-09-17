@@ -12,6 +12,15 @@ namespace GeometryLib
 {
     public class Geometry
     {
+        // Caches for O(1) lookups
+        private readonly Dictionary<(double x, double y), GeomPoint> _pointCache = new();
+        private readonly Dictionary<(int a, int b), GeomLine> _lineCache = new();          // store (minId,maxId)
+        private readonly Dictionary<(int s, int e, double sweep), GeomArc> _arcCache = new();
+
+        // Incremental overall bounds (optional)
+        private bool _hasBounds = false;
+        private double _minX, _maxX, _minY, _maxY;
+
         public List<GeomPoint> Points { get; private set; } = new List<GeomPoint>();
 
         public List<GeomLine> Lines { get; private set; } = new List<GeomLine>();
@@ -26,11 +35,26 @@ namespace GeometryLib
 
         public GeomPoint AddPoint(double x, double y)
         {
-            GeomPoint? pt = Points.Find(p => p.x == x && p.y == y);
-            if (pt == null)
+            var key = (x, y);
+            if (_pointCache.TryGetValue(key, out var existing))
+                return existing;
+
+            var pt = new GeomPoint(x, y);
+            _pointCache[key] = pt;
+            Points.Add(pt);
+
+            if (!_hasBounds)
             {
-                pt = new GeomPoint(x, y);
-                Points.Add(pt);
+                _minX = _maxX = x;
+                _minY = _maxY = y;
+                _hasBounds = true;
+            }
+            else
+            {
+                if (x < _minX) _minX = x;
+                if (x > _maxX) _maxX = x;
+                if (y < _minY) _minY = y;
+                if (y > _maxY) _maxY = y;
             }
             return pt;
         }
@@ -42,26 +66,31 @@ namespace GeometryLib
             return pt;
         }
 
-        public GeomLine AddLine(GeomPoint pt1,  GeomPoint pt2) 
+        public GeomLine AddLine(GeomPoint pt1, GeomPoint pt2)
         {
-            GeomLine? line = Lines.Find(l => (l.pt1 == pt1 && l.pt2 == pt2) || (l.pt1 == pt2 && l.pt2 == pt1));
-            if (line == null)
-            {
-                line = new GeomLine(pt1, pt2);
-                Lines.Add(line);
-            }
+            int a = Math.Min(pt1.Id, pt2.Id);
+            int b = Math.Max(pt1.Id, pt2.Id);
+            var key = (a, b);
+            if (_lineCache.TryGetValue(key, out var line))
+                return line;
+
+            line = new GeomLine(pt1, pt2);
+            _lineCache[key] = line;
+            Lines.Add(line);
             return line;
         }
 
         public GeomArc AddArc(GeomPoint startPt, GeomPoint endPt, double radius, double sweepAngle)
         {
-            GeomArc? arc = Arcs.Find(a => (a.StartPt == startPt && a.EndPt == endPt && a.SweepAngle == sweepAngle));
-            if (arc == null)
-            {
-                arc = new GeomArc(startPt, endPt, sweepAngle);
-                Arcs.Add(arc);
-                //AddPoint(arc.Center.x, arc.Center.y);
-            }
+            // radius not currently part of uniqueness (original code ignored radius too)
+            var key = (startPt.Id, endPt.Id, sweepAngle);
+            if (_arcCache.TryGetValue(key, out var arc))
+                return arc;
+
+            arc = new GeomArc(startPt, endPt, sweepAngle);
+            Arcs.Add(arc);
+            _arcCache[key] = arc;
+            // (Optional: update bounds using arc bounding box if you later cache bounds per arc)
             return arc;
         }
 
@@ -133,6 +162,12 @@ namespace GeometryLib
 
         public BoundingBox GetBounds()
         {
+            if (_hasBounds && LineLoops.Count == 0)
+            {
+                // Fallback to point-derived bounds if no loops yet
+                return new BoundingBox(_minX, _minY, _maxX, _maxY);
+            }
+            // Existing loop-based logic remains (kept for correctness when arcs expand beyond point extents)
             double minX = double.MaxValue;
             double minY = double.MaxValue;
             double maxX = double.MinValue;

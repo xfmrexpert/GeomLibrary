@@ -11,7 +11,7 @@ namespace GeometryLib
     public class GmshFile
     {
         public int ElementOrder {get; set;} = 1;
-        public string Filename {get; set;}
+        
         public List<GmshPoint> points = new List<GmshPoint>();
         public List<GmshLine> lines = new List<GmshLine>();
         public List<GmshArc> arcs = new List<GmshArc>();
@@ -25,10 +25,7 @@ namespace GeometryLib
         private int nextGeoID = 1;
         private int nextPhysID = 1;
 
-        public GmshFile(string filename)
-        {
-            Filename = filename;
-        }
+        public GmshFile() { }
 
         public GmshPoint? FindPoint(double x, double y, double z)
         {
@@ -340,9 +337,11 @@ namespace GeometryLib
             }
         }
 
-        public void writeFile()
+        public void WriteFile(string filename = null)
         {
-            StreamWriter sw = File.CreateText(Filename);
+            if (filename == null) throw new Exception("No filename specified for Gmsh file output.");
+
+            StreamWriter sw = File.CreateText(filename);
             sw.WriteLine($"lc = {lc};");
             sw.WriteLine("Mesh.ElementOrder = " + ElementOrder + ";");
             if (false)
@@ -406,8 +405,8 @@ namespace GeometryLib
             }
 
             foreach (GmshArc arc in arcs)
-            { 
-                arc.Write(sw); 
+            {
+                arc.Write(sw);
             }
 
             foreach (GmshCurveLoop curve_loop in curve_loops)
@@ -434,53 +433,6 @@ namespace GeometryLib
             sw.Close();
         }
 
-        public Mesh GenerateMesh(double meshscale = 1.0, int meshorder = 1)
-        {
-            string gmshPath = "./bin/gmsh.exe";
-
-            writeFile();
-
-            var sb = new StringBuilder();
-            Process p = new Process();
-
-            p.StartInfo.FileName = gmshPath;
-            p.StartInfo.Arguments = $"{Filename} -2 -order {meshorder} -clscale {meshscale} -v 3";
-            p.StartInfo.CreateNoWindow = true;
-
-            // redirect the output
-            p.StartInfo.RedirectStandardOutput = true;
-            p.StartInfo.RedirectStandardError = true;
-
-            // hookup the eventhandlers to capture the data that is received
-            p.OutputDataReceived += (sender, args) => sb.AppendLine(args.Data);
-            p.ErrorDataReceived += (sender, args) => sb.AppendLine(args.Data);
-
-            // direct start
-            p.StartInfo.UseShellExecute = false;
-
-            p.Start();
-
-            // start our event pumps
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-
-            // until we are done
-            p.WaitForExit();
-
-            string output = sb.ToString();
-
-            int return_code = p.ExitCode;
-            if (return_code != 0)
-            {
-                throw new Exception($"Failed to run gmsh");
-            }
-            else
-            {
-                Mesh mesh = new Mesh();
-                mesh.ReadFromMSH2File(Filename[0..^3] + "msh");
-                return mesh;
-            }
-        }
     }
 
     public class GmshPoint

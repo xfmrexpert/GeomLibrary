@@ -12,6 +12,9 @@ namespace GeometryLib
 {
     public class GeomLineLoop : GeomEntity
     {
+        // Precomputed vertices (endpoints in order) for fast inclusion tests
+        private GeomPoint[] _polyVertices = Array.Empty<GeomPoint>();
+
         public override GeomEntityType Type
         {
             get
@@ -25,6 +28,19 @@ namespace GeometryLib
         public GeomLineLoop(List<GeomEntity> boundary)
         {
             Boundary = boundary;
+            RebuildVertexCache();
+        }
+
+        private void RebuildVertexCache()
+        {
+            // Build polygon vertices in traversal order
+            var verts = new List<GeomPoint>(Boundary.Count);
+            foreach (var e in Boundary)
+            {
+                if (e is GeomLine l) verts.Add(l.pt2);
+                else if (e is GeomArc a) verts.Add(a.EndPt);
+            }
+            _polyVertices = verts.ToArray();
         }
 
         public (double minX, double maxX, double minY, double MaxY) GetBoundingBox()
@@ -76,63 +92,25 @@ namespace GeometryLib
             return (minX, maxX, minY, maxY);
         }
 
-        // Ray-casting algorithm to check if the point is inside the polygon
+        // Ray-casting using cached vertex array; ignores arcs curvature (ok for containment heuristic)
         public bool IsPointInside(GeomPoint point)
         {
-            bool result = false;
             foreach (var segment in Boundary)
-            {
-                if (segment.Contains(point))
-                    return true;  // Directly on a segment is considered "inside"
-            }
+                if (segment.Contains(point)) return true;
 
-            int j = Boundary.Count - 1;
-            for (int i = 0; i < Boundary.Count; i++)
+            bool inside = false;
+            var verts = _polyVertices;
+            int j = verts.Length - 1;
+            for (int i = 0; i < verts.Length; i++)
             {
-                GeomLine line = Boundary[i] as GeomLine;
-                if (line != null)
-                {
-                    if ((line.pt1.y < point.y && line.pt2.y >= point.y || line.pt2.y < point.y && line.pt1.y >= point.y)
-                        && (line.pt1.x + (point.y - line.pt1.y) / (line.pt2.y - line.pt1.y) * (line.pt2.x - line.pt1.x) < point.x))
-                    {
-                        result = !result;
-                    }
-                }
+                var vi = verts[i];
+                var vj = verts[j];
+                bool intersect = ((vi.y > point.y) != (vj.y > point.y)) &&
+                                 (point.x < (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y + 1e-16) + vi.x);
+                if (intersect) inside = !inside;
                 j = i;
             }
-            return result;
-        }
-
-        public bool IsPointInsideOld(GeomPoint pt)
-        {
-            bool result = false;
-
-            List<GeomPoint> vertices = new List<GeomPoint>();
-
-            foreach (GeomEntity e in Boundary)
-            {
-                if (e is GeomLine line)
-                {
-                    vertices.Add(line.pt2);
-                }
-                else if (e is GeomArc arc)
-                {
-                    vertices.Add(arc.EndPt);
-                }
-            }
-
-            int j = vertices.Count - 1;
-
-            for (int i = 0; i < vertices.Count; i++)
-            {
-                if ((vertices[i].y < pt.y && vertices[j].y >= pt.y || vertices[j].y < pt.y && vertices[i].y >= pt.y)
-                    && (vertices[i].x + (pt.y - vertices[i].y) / (vertices[j].y - vertices[i].y) * (vertices[j].x - vertices[i].x) < pt.x))
-                {
-                    result = !result;
-                }
-                j = i;
-            }
-            return result;
+            return inside;
         }
     }
 }

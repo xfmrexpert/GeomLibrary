@@ -11,6 +11,8 @@ namespace GeometryLib
 {
     public class GeomSurface : GeomEntity
     {
+        private static readonly ThreadLocal<Random> _rng = new(() => new Random());
+
         public override GeomEntityType Type
         {
             get
@@ -31,36 +33,26 @@ namespace GeometryLib
 
         public GeomPoint GetRandomPointInSurface()
         {
-            Random random = new Random();
             (double minX, double maxX, double minY, double maxY) = Boundary.GetBoundingBox();
-            if (minX == maxX) return new GeomPoint(0.01,0);
-            while (true)
+            if (minX == maxX) return new GeomPoint(minX, minY);
+
+            var rnd = _rng.Value!;
+            for (int attempts = 0; attempts < 10_000; attempts++)
             {
-                // Generate random point within boundary box
-                double x = random.NextDouble() * (maxX - minX) + minX;
-                double y = random.NextDouble() * (maxY - minY) + minY;
-                GeomPoint randomPoint = new GeomPoint(x, y);
+                double x = rnd.NextDouble() * (maxX - minX) + minX;
+                double y = rnd.NextDouble() * (maxY - minY) + minY;
+                var pt = new GeomPoint(x, y);
+                if (!Boundary.IsPointInside(pt)) continue;
 
-                // Check if the point is inside the boundary polygon
-                if (Boundary.IsPointInside(randomPoint))
+                bool inHole = false;
+                foreach (var h in Holes)
                 {
-                    // Check if the point is inside any of the holes
-                    bool insideHole = false;
-                    foreach (var hole in Holes)
-                    {
-                        if (hole.IsPointInside(randomPoint))
-                        {
-                            insideHole = true;
-                            break;
-                        }
-                    }
-
-                    if (!insideHole)
-                    {
-                        return randomPoint;  // The point is inside the polygon and not inside any hole
-                    }
+                    if (h.IsPointInside(pt)) { inHole = true; break; }
                 }
+                if (!inHole) return pt;
             }
+            // Fallback (very unlikely if geometry reasonable)
+            return Boundary is { } ? Boundary.Boundary.OfType<GeomLine>().First().pt1 : new GeomPoint(minX, minY);
         }
 
         public bool ContainsPoint(double x, double y)
