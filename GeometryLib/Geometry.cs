@@ -12,14 +12,11 @@ namespace GeometryLib
 {
     public class Geometry
     {
-        // Removed per-point dictionary cache; now using PointCollection
         public PointCollection Points { get; }
         public List<GeomLine> Lines { get; private set; } = new List<GeomLine>();
         public List<GeomArc> Arcs { get; private set; } = new List<GeomArc>();
         public List<GeomLineLoop> LineLoops { get; private set; } = new List<GeomLineLoop>();
         public List<GeomSurface> Surfaces { get; private set; } = new List<GeomSurface>();
-
-        // Line / arc caches (still exact-id based)
         private readonly Dictionary<(int a, int b), GeomLine> _lineCache = new();
         private readonly Dictionary<(int s, int e, double sweep), GeomArc> _arcCache = new();
 
