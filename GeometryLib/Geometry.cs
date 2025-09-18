@@ -12,37 +12,46 @@ namespace GeometryLib
 {
     public class Geometry
     {
-        // Caches for O(1) lookups
-        private readonly Dictionary<(double x, double y), GeomPoint> _pointCache = new();
-        private readonly Dictionary<(int a, int b), GeomLine> _lineCache = new();          // store (minId,maxId)
+        // Removed per-point dictionary cache; now using PointCollection
+        public PointCollection Points { get; }
+        public List<GeomLine> Lines { get; private set; } = new List<GeomLine>();
+        public List<GeomArc> Arcs { get; private set; } = new List<GeomArc>();
+        public List<GeomLineLoop> LineLoops { get; private set; } = new List<GeomLineLoop>();
+        public List<GeomSurface> Surfaces { get; private set; } = new List<GeomSurface>();
+
+        // Line / arc caches (still exact-id based)
+        private readonly Dictionary<(int a, int b), GeomLine> _lineCache = new();
         private readonly Dictionary<(int s, int e, double sweep), GeomArc> _arcCache = new();
 
-        // Incremental overall bounds (optional)
+        // Incremental bounds
         private bool _hasBounds = false;
         private double _minX, _maxX, _minY, _maxY;
 
-        public List<GeomPoint> Points { get; private set; } = new List<GeomPoint>();
+        public double PointTolerance { get; }
 
-        public List<GeomLine> Lines { get; private set; } = new List<GeomLine>();
-
-        public List<GeomArc> Arcs { get; private set; } = new List<GeomArc>();
-
-        public List<GeomLineLoop> LineLoops { get; private set; } = new List<GeomLineLoop>();
-
-        public List<GeomSurface> Surfaces { get; private set; } = new List<GeomSurface>();
-
-        public Geometry() { }
+        public Geometry(double pointTolerance = 1e-9)
+        {
+            PointTolerance = pointTolerance;
+            Points = new PointCollection(pointTolerance);
+        }
 
         public GeomPoint AddPoint(double x, double y)
         {
-            var key = (x, y);
-            if (_pointCache.TryGetValue(key, out var existing))
-                return existing;
+            var pt = Points.AddOrGet(x, y, out bool isNew);
+            if (isNew) UpdateBoundsWithPoint(pt);
+            return pt;
+        }
 
-            var pt = new GeomPoint(x, y);
-            _pointCache[key] = pt;
-            Points.Add(pt);
+        public GeomPoint AddPoint(double x, double y, double lc)
+        {
+            var pt = Points.AddOrGet(x, y, lc, out bool isNew);
+            if (isNew) UpdateBoundsWithPoint(pt);
+            return pt;
+        }
 
+        private void UpdateBoundsWithPoint(GeomPoint pt)
+        {
+            double x = pt.x, y = pt.y;
             if (!_hasBounds)
             {
                 _minX = _maxX = x;
@@ -56,41 +65,28 @@ namespace GeometryLib
                 if (y < _minY) _minY = y;
                 if (y > _maxY) _maxY = y;
             }
-            return pt;
-        }
-
-        public GeomPoint AddPoint(double x, double y, double lc)
-        {
-            var pt = AddPoint(x, y);
-            pt.lc = lc;
-            return pt;
         }
 
         public GeomLine AddLine(GeomPoint pt1, GeomPoint pt2)
         {
             int a = Math.Min(pt1.Id, pt2.Id);
             int b = Math.Max(pt1.Id, pt2.Id);
-            var key = (a, b);
-            if (_lineCache.TryGetValue(key, out var line))
-                return line;
-
-            line = new GeomLine(pt1, pt2);
-            _lineCache[key] = line;
+            if (_lineCache.TryGetValue((a, b), out var existing))
+                return existing;
+            var line = new GeomLine(pt1, pt2);
+            _lineCache[(a, b)] = line;
             Lines.Add(line);
             return line;
         }
 
         public GeomArc AddArc(GeomPoint startPt, GeomPoint endPt, double radius, double sweepAngle)
         {
-            // radius not currently part of uniqueness (original code ignored radius too)
             var key = (startPt.Id, endPt.Id, sweepAngle);
-            if (_arcCache.TryGetValue(key, out var arc))
-                return arc;
-
-            arc = new GeomArc(startPt, endPt, sweepAngle);
-            Arcs.Add(arc);
+            if (_arcCache.TryGetValue(key, out var existing))
+                return existing;
+            var arc = new GeomArc(startPt, endPt, sweepAngle);
             _arcCache[key] = arc;
-            // (Optional: update bounds using arc bounding box if you later cache bounds per arc)
+            Arcs.Add(arc);
             return arc;
         }
 
