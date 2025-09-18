@@ -42,13 +42,21 @@ namespace GeometryLib
             p.StartInfo.RedirectStandardError = true;
             p.StartInfo.UseShellExecute = false;
 
-            p.OutputDataReceived += (s, a) => { if (a.Data != null && sb != null) sb.AppendLine(a.Data); };
+            p.OutputDataReceived += (s, a) =>
+            {
+                if (a.Data != null && sb != null)
+                {
+                    sb.AppendLine(a.Data);
+                    Console.WriteLine(a.Data);
+                }
+            };
             p.ErrorDataReceived += (s, a) =>
             {
                 if (a.Data != null)
                 {
                     sb ??= new StringBuilder();
                     sb.AppendLine(a.Data);
+                    Console.WriteLine(a.Data);
                 }
             };
 

@@ -19,8 +19,8 @@ namespace GeometryLib
             }
         }
 
-        public double x { get; set; }
-        public double y { get; set; }
+        public double x { get; private set; }
+        public double y { get; private set; }
 
         public double lc { get; set; } = 0.4;
 
