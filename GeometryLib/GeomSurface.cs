@@ -67,5 +67,33 @@ namespace GeometryLib
             }
             return true;
         }
+
+        public GeomPoint GetCentroid()
+        {
+            double cx = 0.0;
+            double cy = 0.0;
+            int n = 0;
+            foreach (var segment in Boundary.Boundary)
+            {
+                if (segment is GeomLine line)
+                {
+                    cx += line.pt1.x + line.pt2.x;
+                    cy += line.pt1.y + line.pt2.y;
+                    n += 2;
+                }
+                else if (segment is GeomArc arc)
+                {
+                    cx += arc.StartPt.x + arc.EndPt.x;
+                    cy += arc.StartPt.y + arc.EndPt.y;
+                    n += 2;
+                }
+            }
+            if (n > 0)
+            {
+                cx /= n;
+                cy /= n;
+            }
+            return new GeomPoint(cx, cy);
+        }
     }
 }
