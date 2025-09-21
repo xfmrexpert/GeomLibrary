@@ -37,17 +37,16 @@ namespace GeometryLib
             return null;
         }
 
-        public Mesh GenerateMesh(double meshscale = 1.0, int meshorder = 1)
+        public Mesh GenerateMesh(string filename,double meshscale = 1.0, int meshorder = 1)
         {
             string gmshPath = "./bin/gmsh";
-            string filename = "tempgeo.geo";
-            Debug.WriteLine($"Current Path: {Environment.CurrentDirectory}");
+
             if (!File.Exists(gmshPath))
                 throw new Exception("Cannot find gmsh executable at " + gmshPath);
 
             gmshFile.WriteFile(filename);
 
-            string gmshArgs = $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 4";
+            string gmshArgs = $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 3";
 
             StringBuilder? sb = CaptureOutputOnSuccess ? new StringBuilder() : null;
             using var p = new Process();
