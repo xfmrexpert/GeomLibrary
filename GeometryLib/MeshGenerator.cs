@@ -39,7 +39,7 @@ namespace GeometryLib
 
         public Mesh GenerateMesh(string filename,double meshscale = 1.0, int meshorder = 1)
         {
-            string gmshPath = "./bin/gmsh";
+            string gmshPath = "../../../bin/gmsh";
 
             if (!File.Exists(gmshPath))
                 throw new Exception("Cannot find gmsh executable at " + gmshPath);
