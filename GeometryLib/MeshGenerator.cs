@@ -12,7 +12,10 @@ namespace GeometryLib
     {
         private readonly GmshFile gmshFile;
         public bool CaptureOutputOnSuccess { get; set; } = false;
-        public bool ShowInTerminal { get; set; } = true;   // NEW
+        public bool ShowInTerminal { get; set; } = true;
+
+        // Configurable paths with smart defaults
+        public string? GmshPath { get; set; }
 
         public MeshGenerator()
         {
@@ -24,25 +27,73 @@ namespace GeometryLib
             gmshFile.CreateFromGeometry(geometry);
         }
 
-        private static string? FindTerminal()
+        private string FindGmshExecutable()
         {
-            string[] candidates = { "gnome-terminal", "xterm", "konsole" };
-            foreach (var c in candidates)
+            // 1. Explicit configuration (highest priority)
+            if (!string.IsNullOrEmpty(GmshPath) && File.Exists(GmshPath))
+                return GmshPath;
+
+            // 2. Environment variable
+            var envPath = Environment.GetEnvironmentVariable("GMSH_PATH");
+            if (!string.IsNullOrEmpty(envPath) && File.Exists(envPath))
+                return envPath;
+
+            // 3. Relative to current executable/working directory
+            string[] relativePaths = {
+                "./bin/gmsh",           // same folder as exe
+                "../bin/gmsh",          // parent/bin
+                "../../../bin/gmsh",    // your current setup
+                "./gmsh"
+            };
+
+            foreach (var rel in relativePaths)
             {
-                var full = $"/usr/bin/{c}";
-                if (File.Exists(full)) return full;
-                if (Environment.GetEnvironmentVariable("PATH")?.Split(':').Any(p => File.Exists(Path.Combine(p, c))) == true)
-                    return c;
+                if (File.Exists(rel)) return Path.GetFullPath(rel);
+            }
+
+            // 4. System PATH search
+            var pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (pathEnv != null)
+            {
+                foreach (var dir in pathEnv.Split(Path.PathSeparator))
+                {
+                    var candidate = Path.Combine(dir, "gmsh");
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+
+            // 5. Common system locations (Linux/Unix)
+            string[] systemPaths = { "/usr/bin/gmsh", "/usr/local/bin/gmsh", "/opt/gmsh/bin/gmsh" };
+            foreach (var sys in systemPaths)
+                if (File.Exists(sys)) return sys;
+
+            throw new FileNotFoundException(
+                "gmsh executable not found. Set GmshPath property, GMSH_PATH environment variable, " +
+                "or ensure gmsh is in PATH or relative bin/ folder.");
+        }
+
+        private string? FindTerminal()
+        {
+            string[] terminals = { "cosmic-term","gnome-terminal", "xterm", "konsole" };
+            var pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (pathEnv != null)
+            {
+                foreach (var dir in pathEnv.Split(Path.PathSeparator))
+                {
+                    foreach (var term in terminals)
+                    {
+                        var candidate = Path.Combine(dir, term);
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                }
             }
             return null;
         }
 
-        public Mesh GenerateMesh(string filename,double meshscale = 1.0, int meshorder = 1)
+        public Mesh GenerateMesh(string filename, double meshscale = 1.0, int meshorder = 1)
         {
-            string gmshPath = "../../../bin/gmsh";
-
-            if (!File.Exists(gmshPath))
-                throw new Exception("Cannot find gmsh executable at " + gmshPath);
+            string gmshPath = FindGmshExecutable();
+            Console.WriteLine($"Using gmsh at: {gmshPath}");
 
             gmshFile.WriteFile(filename);
 
