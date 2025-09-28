@@ -12,7 +12,7 @@ namespace GeometryLib
     {
         private readonly GmshFile gmshFile;
         public bool CaptureOutputOnSuccess { get; set; } = false;
-        public bool ShowInTerminal { get; set; } = true;
+        public bool ShowInTerminal { get; set; } = false;
 
         // Configurable paths with smart defaults
         public string? GmshPath { get; set; }
