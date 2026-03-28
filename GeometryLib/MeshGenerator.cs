@@ -27,6 +27,9 @@ namespace GeometryLib
             gmshFile.CreateFromGeometry(geometry);
         }
 
+        private static readonly bool IsWindows = OperatingSystem.IsWindows();
+        private static readonly string[] GmshNames = IsWindows ? ["gmsh.exe", "gmsh"] : ["gmsh"];
+
         private string FindGmshExecutable()
         {
             // 1. Explicit configuration (highest priority)
@@ -35,20 +38,27 @@ namespace GeometryLib
 
             // 2. Environment variable
             var envPath = Environment.GetEnvironmentVariable("GMSH_PATH");
-            if (!string.IsNullOrEmpty(envPath) && File.Exists(envPath))
+            envPath = string.IsNullOrEmpty(envPath) ? null : envPath.Trim('"');
+            if (!string.IsNullOrEmpty(envPath) & File.Exists(envPath))
+            {
                 return envPath;
+            }
 
             // 3. Relative to current executable/working directory
-            string[] relativePaths = {
-                "./bin/gmsh",           // same folder as exe
-                "../bin/gmsh",          // parent/bin
-                "../../../bin/gmsh",    // your current setup
-                "./gmsh"
+            string[] relativeDirs = {
+                "./bin",           // same folder as exe
+                "../bin",          // parent/bin
+                "../../../bin",    // your current setup
+                "."
             };
 
-            foreach (var rel in relativePaths)
+            foreach (var dir in relativeDirs)
             {
-                if (File.Exists(rel)) return Path.GetFullPath(rel);
+                foreach (var name in GmshNames)
+                {
+                    var rel = Path.Combine(dir, name);
+                    if (File.Exists(rel)) return Path.GetFullPath(rel);
+                }
             }
 
             // 4. System PATH search
@@ -57,15 +67,42 @@ namespace GeometryLib
             {
                 foreach (var dir in pathEnv.Split(Path.PathSeparator))
                 {
-                    var candidate = Path.Combine(dir, "gmsh");
-                    if (File.Exists(candidate)) return candidate;
+                    foreach (var name in GmshNames)
+                    {
+                        var candidate = Path.Combine(dir, name);
+                        if (File.Exists(candidate)) return candidate;
+                    }
                 }
             }
 
-            // 5. Common system locations (Linux/Unix)
-            string[] systemPaths = { "/usr/bin/gmsh", "/usr/local/bin/gmsh", "/opt/gmsh/bin/gmsh" };
-            foreach (var sys in systemPaths)
-                if (File.Exists(sys)) return sys;
+            // 5. Common system locations
+            if (IsWindows)
+            {
+                // Check common Windows install locations
+                var programFiles = new[] {
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+                };
+                foreach (var pf in programFiles)
+                {
+                    if (string.IsNullOrEmpty(pf)) continue;
+                    var gmshDir = Path.Combine(pf, "gmsh");
+                    if (Directory.Exists(gmshDir))
+                    {
+                        foreach (var name in GmshNames)
+                        {
+                            var candidate = Path.Combine(gmshDir, name);
+                            if (File.Exists(candidate)) return candidate;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                string[] systemPaths = { "/usr/bin/gmsh", "/usr/local/bin/gmsh", "/opt/gmsh/bin/gmsh" };
+                foreach (var sys in systemPaths)
+                    if (File.Exists(sys)) return sys;
+            }
 
             throw new FileNotFoundException(
                 "gmsh executable not found. Set GmshPath property, GMSH_PATH environment variable, " +
@@ -161,7 +198,7 @@ namespace GeometryLib
                 p.BeginErrorReadLine();
             }
 
-            const int timeoutMs = 12000000;
+            const int timeoutMs = 120000;
             if (!p.WaitForExit(timeoutMs))
             {
                 try { p.Kill(entireProcessTree: true); } catch { }
