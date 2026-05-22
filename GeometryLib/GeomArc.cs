@@ -14,7 +14,6 @@ namespace GeometryLib
 {
     // This is presently configured for a circular arc segment.  An open question is whether to extend to an elliptical arc segment.
     // Note that SweepAngle is assumed to proceed clockwise (which may actually be counter-intuitive)
-    // Possible TODO: Allow for start point, center point, end point definition of circular arc
     // TODO: Only need start or end point, not both, if sweep angle is given.
     public class GeomArc : GeomEntity
     {
@@ -78,6 +77,33 @@ namespace GeometryLib
             StartPt = startPt;
             EndPt = endPt;
             SweepAngle = sweepAngle;
+        }
+
+        public GeomArc(GeomPoint startPt, GeomPoint centerPt, GeomPoint endPt)
+        {
+            if (startPt == null || endPt == null || centerPt == null)
+                throw new ArgumentNullException("StartPoint, CenterPoint, or EndPoint cannot be null.");
+
+            StartPt = startPt;
+            EndPt = endPt;
+
+            // Compute angles from center to start and end points
+            double startAngle = Math.Atan2(startPt.y - centerPt.y, startPt.x - centerPt.x);
+            double endAngle = Math.Atan2(endPt.y - centerPt.y, endPt.x - centerPt.x);
+
+            // Compute signed sweep angle.
+            // Note: SweepAngle convention here is "clockwise positive" per the class comment,
+            // so we negate the standard CCW math angle delta.
+            double delta = endAngle - startAngle;
+
+            // Normalize delta to (-PI, PI]
+            while (delta > Math.PI) delta -= 2.0 * Math.PI;
+            while (delta <= -Math.PI) delta += 2.0 * Math.PI;
+
+            SweepAngle = delta;
+
+            if (Math.Abs(SweepAngle) <= double.Epsilon)
+                throw new ArgumentException("Sweep angle cannot be zero (start and end points are coincident relative to center).");
         }
 
         // Contains method: Check if a point lies on the arc

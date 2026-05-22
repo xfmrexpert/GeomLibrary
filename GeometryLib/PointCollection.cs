@@ -55,5 +55,28 @@ namespace GeometryLib
         public GeomPoint this[int index] => _points[index];
         public IEnumerator<GeomPoint> GetEnumerator() => _points.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        /// <summary>
+        /// Remove all points matching the given predicate, also clearing them from
+        /// the spatial bucket index. Returns the number of points removed.
+        /// </summary>
+        public int RemoveWhere(Predicate<GeomPoint> predicate)
+        {
+            if (predicate == null) throw new ArgumentNullException(nameof(predicate));
+
+            int removed = _points.RemoveAll(predicate);
+            if (removed == 0) return 0;
+
+            // Rebuild affected buckets (or all, for simplicity and correctness).
+            var emptyKeys = new List<(long, long)>();
+            foreach (var kvp in _buckets)
+            {
+                kvp.Value.RemoveAll(predicate);
+                if (kvp.Value.Count == 0) emptyKeys.Add(kvp.Key);
+            }
+            foreach (var k in emptyKeys) _buckets.Remove(k);
+
+            return removed;
+        }
     }
 }

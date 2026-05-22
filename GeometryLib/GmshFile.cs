@@ -187,6 +187,30 @@ namespace GeometryLib
             return loop;
         }
 
+        /// <summary>
+        /// Append <paramref name="seg"/> to the <see cref="GmshPhysicalCurve"/> identified
+        /// by <paramref name="tag"/>, creating that physical curve if it doesn't exist yet.
+        /// Duplicate segments are ignored so the same boundary entity reached through both
+        /// the per-line pass and the curve-loop pass collapses to a single membership.
+        /// This is required when multiple sub-segments share the same Dirichlet tag (e.g.,
+        /// a conductor whose boundary has been split into several sub-lines after clipping):
+        /// gmsh treats <c>Physical Curve (T) = {...};</c> by ID, so emitting the tag twice
+        /// would overwrite the previous one and silently drop entities.
+        /// </summary>
+        private void AddOrExtendPhysicalCurve(int tag, GmshCurvilinearEntity seg)
+        {
+            var existing = physical_curves.Find(pc => pc.ID == tag);
+            if (existing == null)
+            {
+                physical_curves.Add(new GmshPhysicalCurve(
+                    new List<GmshCurvilinearEntity> { seg }, tag));
+            }
+            else if (!existing.curves.Contains(seg))
+            {
+                existing.curves.Add(seg);
+            }
+        }
+
         public GmshPlaneSurface CreateNewSurface(GmshCurveLoop boundary, List<GmshCurveLoop> holes, int ID=-9999)
         {
             var surface = new GmshPlaneSurface(boundary, holes);
@@ -259,7 +283,7 @@ namespace GeometryLib
                     var new_line = CreateNewLine(pt1, pt2);
                     if (line.Tag > 0)
                     {
-                        physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_line }), line.Tag));
+                        AddOrExtendPhysicalCurve(line.Tag, new_line);
                     }
                 }
             }
@@ -285,7 +309,7 @@ namespace GeometryLib
                 }
                 if (arc.Tag > 0)
                 {
-                    physical_curves.Add(new GmshPhysicalCurve(new List<GmshCurvilinearEntity>(new GmshCurvilinearEntity[1] { new_arc }), arc.Tag));
+                    AddOrExtendPhysicalCurve(arc.Tag, new_arc);
                 }
             }
 
@@ -313,7 +337,8 @@ namespace GeometryLib
                 CreateNewCurveLoop(boundary);
                 if (loop.Tag > 0)
                 {
-                    physical_curves.Add(new GmshPhysicalCurve(boundary, loop.Tag));
+                    foreach (var seg in boundary)
+                        AddOrExtendPhysicalCurve(loop.Tag, seg);
                 }
             }
 
