@@ -366,6 +366,51 @@ namespace GeometryLib
         {
             if (filename == null) throw new Exception("No filename specified for Gmsh file output.");
 
+            // ----------------------------------------------------------------
+            // Pre-pass: align each GmshLine's natural direction with the CCW
+            // traversal of (at least one) adjacent surface.
+            //
+            // Gmsh writes the 1D boundary element for a `Line(id) = {a, b};`
+            // as nodes (a -> b) in that fixed order, regardless of the +/- sign
+            // a Curve Loop uses for the line. After the CCW-orientation pass on
+            // each Curve Loop, a line whose natural endpoint order happens to
+            // be the reverse of the CCW traversal in every loop that uses it
+            // ends up emitted with the wrong winding, so MFEM reports
+            // "Boundary elements with wrong orientation: N / N (fixed)" and
+            // then aborts in Mesh::Finalize with "Invalid mesh topology.
+            // Interior face with incompatible orientations."
+            //
+            // Strategy: tally each line's per-loop signed usage. If it appears
+            // more often with -1 than +1, swap its StartPt and EndPt so its
+            // emitted direction matches the predominant CCW traversal. The
+            // Curve Loop write step recomputes orientations from the new line
+            // directions, so signs in the .geo flip accordingly and the loop
+            // remains geometrically CCW.
+            // ----------------------------------------------------------------
+            var loopOrientations = new Dictionary<GmshCurveLoop, List<int>>(curve_loops.Count);
+            var lineNetSign = new Dictionary<GmshLine, int>(lines.Count);
+            foreach (var loop in curve_loops)
+            {
+                var orientations = loop.ComputeOrientations();
+                loopOrientations[loop] = orientations;
+                for (int i = 0; i < loop.segments.Count; i++)
+                {
+                    if (loop.segments[i] is GmshLine gl)
+                    {
+                        lineNetSign.TryGetValue(gl, out int acc);
+                        lineNetSign[gl] = acc + orientations[i];
+                    }
+                }
+            }
+            foreach (var kvp in lineNetSign)
+            {
+                if (kvp.Value < 0)
+                {
+                    var l = kvp.Key;
+                    (l.StartPt, l.EndPt) = (l.EndPt, l.StartPt);
+                }
+            }
+
             StreamWriter sw = File.CreateText(filename);
             sw.WriteLine($"lc = {lc};");
             sw.WriteLine("Mesh.ElementOrder = " + ElementOrder + ";");
@@ -558,6 +603,14 @@ namespace GeometryLib
             sw.WriteLine("};");
         }
 
+        /// <summary>
+        /// Public wrapper around the loop's orientation determination, so
+        /// <see cref="GmshFile.WriteFile"/> can inspect per-segment signs before
+        /// emitting any geometry (used to align each line's natural direction
+        /// with the predominant CCW traversal of its containing loops).
+        /// </summary>
+        public List<int> ComputeOrientations() => DetermineLineSegmentOrientations();
+
         public bool IsMatchingLoop(GeomLineLoop in_loop)
         {
             foreach (var in_seg in in_loop.Boundary)
@@ -733,7 +786,27 @@ namespace GeometryLib
                 currDirection = orientations[i+1];
             }
             //orientations.Add(1);
-            
+
+            // Ensure CCW polygon orientation when viewed from +z. The chaining loop above
+            // only guarantees head-to-tail continuity; the resulting traversal can still be
+            // CW, which causes Gmsh to mesh the surface with inverted (CW-wound) triangles.
+            // MFEM then reports "Elements with wrong orientation: N / N (fixed)" and the
+            // subsequent boundary-element re-orientation can dereference an invalid index,
+            // tripping MFEM_ASSERT in debug and silently corrupting BC assignment in release.
+            // (Gmsh handles hole loops independently, inverting them as needed, so forcing
+            // every loop CCW is safe for both outer boundaries and holes.)
+            double signedArea = 0.0;
+            for (int i = 0; i < n; i++)
+            {
+                var seg = segments[i];
+                var startPt = orientations[i] > 0 ? seg.StartPt : seg.EndPt;
+                var endPt = orientations[i] > 0 ? seg.EndPt : seg.StartPt;
+                signedArea += (startPt.x * endPt.y - endPt.x * startPt.y);
+            }
+            if (signedArea < 0)
+            {
+                for (int i = 0; i < n; i++) orientations[i] = -orientations[i];
+            }
 
             return orientations;
         }

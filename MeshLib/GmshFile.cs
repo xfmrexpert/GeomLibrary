@@ -13,6 +13,8 @@ namespace MeshLib
         public List<GmshNode> Nodes { get; } = new();
         public List<GmshElement> Elements { get; } = new();
         public List<GmshNodeData> NodeData { get; } = new();
+        public List<GmshElementData> ElementData { get; } = new();
+        public List<GmshElementNodeData> ElementNodeData { get; } = new();
 
         public static GmshFile Parse(string filePath)
         {
@@ -37,6 +39,12 @@ namespace MeshLib
                         break;
                     case "$NodeData":
                         ParseNodeData(reader, mshFile);
+                        break;
+                    case "$ElementData":
+                        ParseElementData(reader, mshFile);
+                        break;
+                    case "$ElementNodeData":
+                        ParseElementNodeData(reader, mshFile);
                         break;
                     default:
                         break;
@@ -154,6 +162,93 @@ namespace MeshLib
             // Skip the $EndNodeData line
             reader.ReadLine();
         }
+
+        private static (List<string> stringTags, List<double> realTags, List<int> integerTags) ParseViewHeader(StreamReader reader)
+        {
+            int numberOfStringTags = int.Parse(reader.ReadLine()?.Trim() ?? "0");
+            var stringTags = new List<string>();
+            for (int i = 0; i < numberOfStringTags; i++)
+            {
+                stringTags.Add(reader.ReadLine()?.Trim().Trim('"') ?? string.Empty);
+            }
+
+            int numberOfRealTags = int.Parse(reader.ReadLine()?.Trim() ?? "0");
+            var realTags = new List<double>();
+            for (int i = 0; i < numberOfRealTags; i++)
+            {
+                realTags.Add(double.Parse(reader.ReadLine()?.Trim() ?? "0", CultureInfo.InvariantCulture));
+            }
+
+            int numberOfIntegerTags = int.Parse(reader.ReadLine()?.Trim() ?? "0");
+            var integerTags = new List<int>();
+            for (int i = 0; i < numberOfIntegerTags; i++)
+            {
+                integerTags.Add(int.Parse(reader.ReadLine()?.Trim() ?? "0"));
+            }
+
+            return (stringTags, realTags, integerTags);
+        }
+
+        private static void ParseElementData(StreamReader reader, GmshFile mshFile)
+        {
+            var (stringTags, realTags, integerTags) = ParseViewHeader(reader);
+            // Integer tags: [time step, number-of-components, number-of-entities, (partition)]
+            int numComponents = integerTags[1];
+            int numEntities = integerTags[2];
+
+            var values = new List<(int ElementId, double[] Values)>(numEntities);
+            for (int i = 0; i < numEntities; i++)
+            {
+                var parts = (reader.ReadLine() ?? string.Empty).Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 1 + numComponents)
+                    throw new InvalidDataException("Invalid $ElementData entry.");
+
+                int elementId = int.Parse(parts[0]);
+                var comps = new double[numComponents];
+                for (int c = 0; c < numComponents; c++)
+                    comps[c] = double.Parse(parts[1 + c], CultureInfo.InvariantCulture);
+
+                values.Add((elementId, comps));
+            }
+
+            mshFile.ElementData.Add(new GmshElementData(stringTags, realTags, integerTags, values));
+
+            // Skip the $EndElementData line
+            reader.ReadLine();
+        }
+
+        private static void ParseElementNodeData(StreamReader reader, GmshFile mshFile)
+        {
+            var (stringTags, realTags, integerTags) = ParseViewHeader(reader);
+            // Integer tags: [time step, number-of-components, number-of-entities, (partition)]
+            int numComponents = integerTags[1];
+            int numEntities = integerTags[2];
+
+            var values = new List<(int ElementId, int NumNodes, double[] Values)>(numEntities);
+            for (int i = 0; i < numEntities; i++)
+            {
+                var parts = (reader.ReadLine() ?? string.Empty).Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2)
+                    throw new InvalidDataException("Invalid $ElementNodeData entry.");
+
+                int elementId = int.Parse(parts[0]);
+                int numNodes = int.Parse(parts[1]);
+                int expected = 2 + numComponents * numNodes;
+                if (parts.Length < expected)
+                    throw new InvalidDataException("Invalid $ElementNodeData entry (insufficient values).");
+
+                var comps = new double[numComponents * numNodes];
+                for (int c = 0; c < comps.Length; c++)
+                    comps[c] = double.Parse(parts[2 + c], CultureInfo.InvariantCulture);
+
+                values.Add((elementId, numNodes, comps));
+            }
+
+            mshFile.ElementNodeData.Add(new GmshElementNodeData(stringTags, realTags, integerTags, values));
+
+            // Skip the $EndElementNodeData line
+            reader.ReadLine();
+        }
     }
 
     public record GmshNode(uint Id, double X, double Y, double Z);
@@ -165,5 +260,17 @@ namespace MeshLib
         List<double> RealTags,
         List<int> IntegerTags,
         List<(int NodeId, double Value)> Data);
+
+    public record GmshElementData(
+        List<string> StringTags,
+        List<double> RealTags,
+        List<int> IntegerTags,
+        List<(int ElementId, double[] Values)> Data);
+
+    public record GmshElementNodeData(
+        List<string> StringTags,
+        List<double> RealTags,
+        List<int> IntegerTags,
+        List<(int ElementId, int NumNodes, double[] Values)> Data);
 }
 

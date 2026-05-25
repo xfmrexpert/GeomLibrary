@@ -134,7 +134,20 @@ namespace GeometryLib
 
             gmshFile.WriteFile(filename);
 
-            string gmshArgs = $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 3";
+            // -setnumber Mesh.RemoveDuplicateNodes/Elements 1 collapses coincident nodes/elements
+            // that occur along clip-boundary seams between independently-built surfaces. Without
+            // this, MFEM's Mesh::Finalize aborts with
+            //   "Verification failed: (faces_info[i].Elem2No < 0 || faces_info[i].Elem2Inf%2 != 0)
+            //    --> Invalid mesh topology. Interior face with incompatible orientations."
+            // because the duplicates leave an interior edge shared by two same-orientation triangles.
+            // -setnumber Mesh.RenumberNodes/Elements 1 produces contiguous IDs after the removals so
+            // the resulting msh2 file is self-consistent.
+            string gmshArgs =
+                $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 3 " +
+                "-setnumber Mesh.RemoveDuplicateNodes 1 " +
+                "-setnumber Mesh.RemoveDuplicateElements 1 " +
+                "-setnumber Mesh.RenumberNodes 1 " +
+                "-setnumber Mesh.RenumberElements 1";
 
             StringBuilder? sb = CaptureOutputOnSuccess ? new StringBuilder() : null;
             using var p = new Process();
