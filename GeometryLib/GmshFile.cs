@@ -20,10 +20,41 @@ namespace GeometryLib
         public List<GmshPhysicalCurve> physical_curves = new List<GmshPhysicalCurve>();
         public List<GmshPhysicalSurface> physical_surfaces = new List<GmshPhysicalSurface>();
 
+        // Mesh-size fields (local refinement). Written as `Field[id] = ...;`
+        // blocks at the end of the .geo, with `Background Field = BackgroundFieldId;`
+        // selecting the driver field. Fields use their own ID namespace in gmsh
+        // (independent of geometric/physical IDs), so we maintain a separate counter.
+        public List<GmshField> fields = new List<GmshField>();
+        public int? BackgroundFieldId { get; set; }
+
+        /// <summary>
+        /// When a background field is active, by default we tell gmsh to ignore
+        /// per-point characteristic lengths and curvature-based sizing so the
+        /// field is the sole *requested-size* driver. Set to false to keep
+        /// mixing them (the effective size at each location becomes the min of
+        /// all sources).
+        /// </summary>
+        public bool DisableOtherSizeSourcesWhenFieldActive { get; set; } = true;
+
+        /// <summary>
+        /// Whether gmsh is allowed to grow element sizes inward from the boundary
+        /// at a controlled rate (corresponds to `Mesh.MeshSizeExtendFromBoundary`).
+        /// Default true — leaving this on usually prevents the "sliver triangle
+        /// fan" you get when the field jumps from a small SizeMin near a refined
+        /// curve to a large SizeMax along a coarsely-discretized outer boundary,
+        /// because gmsh inserts intermediate-sized cells instead of trying to
+        /// satisfy the field jump in one element. Set to false only if you
+        /// really want the field to be the sole size source.
+        /// </summary>
+        public bool ExtendSizeFromBoundary { get; set; } = true;
+
         public double lc { get; set; } = 0.1;
 
         private int nextGeoID = 1;
         private int nextPhysID = 1;
+        private int nextFieldID = 1;
+
+        public int NewFieldID() => nextFieldID++;
 
         public GmshFile() { }
 
@@ -268,6 +299,9 @@ namespace GeometryLib
 
             nextGeoID = 1;
             nextPhysID = 1;
+            nextFieldID = 1;
+            fields.Clear();
+            BackgroundFieldId = null;
 
             foreach(var point in geometry.Points)
             {
@@ -497,6 +531,27 @@ namespace GeometryLib
             foreach (GmshPhysicalSurface surface in physical_surfaces)
             {
                 surface.Write(sw);
+            }
+
+            // Mesh-size fields + background field selection.
+            foreach (var field in fields)
+            {
+                field.Write(sw);
+            }
+            if (BackgroundFieldId.HasValue)
+            {
+                sw.WriteLine("Background Field = {0};", BackgroundFieldId.Value);
+                if (DisableOtherSizeSourcesWhenFieldActive)
+                {
+                    // Make the background field authoritative for *requested* sizes:
+                    // ignore per-point lc and curvature-based sizing. We deliberately
+                    // do NOT disable MeshSizeExtendFromBoundary here — that one is
+                    // gmsh's growth-rate limiter, and turning it off produces sliver
+                    // fans between a fine field region and a coarse outer boundary.
+                    sw.WriteLine("Mesh.MeshSizeFromPoints = 0;");
+                    sw.WriteLine("Mesh.MeshSizeFromCurvature = 0;");
+                }
+                sw.WriteLine("Mesh.MeshSizeExtendFromBoundary = {0};", ExtendSizeFromBoundary ? 1 : 0);
             }
 
             sw.WriteLine("Mesh.MshFileVersion = 2;");
@@ -953,6 +1008,124 @@ namespace GeometryLib
             }
         }
 
+    }
+
+    // -------------------------------------------------------------------------
+    // Mesh-size fields (option 2: field-based local refinement). Each field is
+    // emitted as a `Field[id] = TypeName;` block followed by one line per
+    // configured property. Combine them with `GmshMinField`, then assign the
+    // combiner's ID to `GmshFile.BackgroundFieldId`.
+    // See https://gmsh.info/doc/texinfo/gmsh.html#Specifying-mesh-element-sizes
+    // -------------------------------------------------------------------------
+    public abstract class GmshField
+    {
+        public int ID;
+        public abstract string TypeName { get; }
+
+        public virtual void Write(StreamWriter sw)
+        {
+            sw.WriteLine("Field[{0}] = {1};", ID, TypeName);
+            WriteProperties(sw);
+        }
+
+        protected abstract void WriteProperties(StreamWriter sw);
+
+        protected static string Inv(double v) =>
+            v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+        protected void WriteList(StreamWriter sw, string propName, IEnumerable<int> ids)
+        {
+            sw.WriteLine("Field[{0}].{1} = {{{2}}};", ID, propName, string.Join(", ", ids));
+        }
+    }
+
+    /// <summary>
+    /// Distance field: at each point in the mesh, evaluates to the distance to
+    /// the nearest sampled point on the listed entities. Drive it through a
+    /// <see cref="GmshThresholdField"/> to convert distance into an element size.
+    /// </summary>
+    public class GmshDistanceField : GmshField
+    {
+        public override string TypeName => "Distance";
+        public List<int> PointsList { get; } = new List<int>();
+        public List<int> CurvesList { get; } = new List<int>();
+        /// <summary>Samples per curve (gmsh default 20). Higher = more accurate distance near long curves.</summary>
+        public int Sampling { get; set; } = 100;
+
+        protected override void WriteProperties(StreamWriter sw)
+        {
+            if (PointsList.Count > 0) WriteList(sw, "PointsList", PointsList);
+            if (CurvesList.Count > 0)
+            {
+                WriteList(sw, "CurvesList", CurvesList);
+                sw.WriteLine("Field[{0}].Sampling = {1};", ID, Sampling);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Threshold field: maps an input field (typically a Distance field) into a
+    /// mesh size that ramps from <see cref="SizeMin"/> (at distance &lt;= DistMin)
+    /// to <see cref="SizeMax"/> (at distance &gt;= DistMax).
+    /// </summary>
+    public class GmshThresholdField : GmshField
+    {
+        public override string TypeName => "Threshold";
+        public int InField { get; set; }
+        public double SizeMin { get; set; }
+        public double SizeMax { get; set; }
+        public double DistMin { get; set; }
+        public double DistMax { get; set; }
+        /// <summary>If true (default), interpolate sigmoidally between sizes for smoother transition.</summary>
+        public bool Sigmoid { get; set; } = false;
+        /// <summary>If true, clamp the field's output to SizeMax outside [DistMin, DistMax] (gmsh default true).</summary>
+        public bool StopAtDistMax { get; set; } = true;
+
+        protected override void WriteProperties(StreamWriter sw)
+        {
+            sw.WriteLine("Field[{0}].InField = {1};", ID, InField);
+            sw.WriteLine("Field[{0}].SizeMin = {1};", ID, Inv(SizeMin));
+            sw.WriteLine("Field[{0}].SizeMax = {1};", ID, Inv(SizeMax));
+            sw.WriteLine("Field[{0}].DistMin = {1};", ID, Inv(DistMin));
+            sw.WriteLine("Field[{0}].DistMax = {1};", ID, Inv(DistMax));
+            sw.WriteLine("Field[{0}].Sigmoid = {1};", ID, Sigmoid ? 1 : 0);
+            sw.WriteLine("Field[{0}].StopAtDistMax = {1};", ID, StopAtDistMax ? 1 : 0);
+        }
+    }
+
+    /// <summary>
+    /// Min field: pointwise minimum of its input fields. Use this to combine
+    /// several refinement requests (each contributed by a Distance+Threshold
+    /// pair) into a single background field.
+    /// </summary>
+    public class GmshMinField : GmshField
+    {
+        public override string TypeName => "Min";
+        public List<int> FieldsList { get; } = new List<int>();
+
+        protected override void WriteProperties(StreamWriter sw)
+        {
+            WriteList(sw, "FieldsList", FieldsList);
+        }
+    }
+
+    /// <summary>
+    /// Constant field: returns <see cref="VIn"/> inside the listed surfaces and
+    /// <see cref="VOut"/> elsewhere. Handy for "refine this region uniformly".
+    /// </summary>
+    public class GmshConstantField : GmshField
+    {
+        public override string TypeName => "Constant";
+        public List<int> SurfacesList { get; } = new List<int>();
+        public double VIn { get; set; }
+        public double VOut { get; set; } = 1e22;
+
+        protected override void WriteProperties(StreamWriter sw)
+        {
+            if (SurfacesList.Count > 0) WriteList(sw, "SurfacesList", SurfacesList);
+            sw.WriteLine("Field[{0}].VIn = {1};", ID, Inv(VIn));
+            sw.WriteLine("Field[{0}].VOut = {1};", ID, Inv(VOut));
+        }
     }
 
 }

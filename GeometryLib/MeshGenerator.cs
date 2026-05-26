@@ -27,6 +27,102 @@ namespace GeometryLib
             gmshFile.CreateFromGeometry(geometry);
         }
 
+        // ---------------------------------------------------------------------
+        // Mesh refinement (option 2: field-based local sizing).
+        //
+        // Typical usage:
+        //     meshGen.AddGeometry(geometry);
+        //     meshGen.AddDistanceRefinement(
+        //         curves: new[] { conductorCornerArc1, conductorCornerArc2 },
+        //         sizeMin: 0.0005, sizeMax: 0.05,
+        //         distMin: 0.0,    distMax: 0.01);
+        //     meshGen.GenerateMesh("case.geo");
+        //
+        // Internally each call appends a Distance + Threshold pair and rebuilds
+        // the Min combiner used as the background field, so subsequent calls
+        // accumulate. The size at any point becomes the minimum size requested
+        // by any of the added refinements.
+        // ---------------------------------------------------------------------
+        private GmshMinField? _refinementCombiner;
+
+        /// <summary>
+        /// Add a distance-based local refinement around the given geometric entities.
+        /// Inside <paramref name="distMin"/> the target element size is <paramref name="sizeMin"/>;
+        /// beyond <paramref name="distMax"/> it relaxes back to <paramref name="sizeMax"/>.
+        /// Pass any combination of <see cref="GeomLine"/>, <see cref="GeomArc"/>, and
+        /// <see cref="GeomPoint"/> in <paramref name="curves"/> / <paramref name="points"/>.
+        /// </summary>
+        public void AddDistanceRefinement(
+            IEnumerable<object>? curves = null,
+            IEnumerable<GeomPoint>? points = null,
+            double sizeMin = 0.001,
+            double sizeMax = 1.0,
+            double distMin = 0.0,
+            double distMax = 0.01,
+            int sampling = 100,
+            bool sigmoid = true)
+        {
+            var dist = new GmshDistanceField { ID = gmshFile.NewFieldID(), Sampling = sampling };
+
+            if (curves != null)
+            {
+                foreach (var c in curves)
+                {
+                    int id = ResolveCurveId(c);
+                    if (id > 0) dist.CurvesList.Add(id);
+                }
+            }
+            if (points != null)
+            {
+                foreach (var p in points)
+                {
+                    var gp = gmshFile.FindPoint(p);
+                    if (gp != null) dist.PointsList.Add(gp.ID);
+                }
+            }
+
+            if (dist.CurvesList.Count == 0 && dist.PointsList.Count == 0)
+                throw new ArgumentException("AddDistanceRefinement: no resolvable curves or points were provided. Call AddGeometry first and pass entities that exist in the geometry.");
+
+            var thr = new GmshThresholdField
+            {
+                ID = gmshFile.NewFieldID(),
+                InField = dist.ID,
+                SizeMin = sizeMin,
+                SizeMax = sizeMax,
+                DistMin = distMin,
+                DistMax = distMax,
+                Sigmoid = sigmoid,
+            };
+
+            gmshFile.fields.Add(dist);
+            gmshFile.fields.Add(thr);
+
+            if (_refinementCombiner == null)
+            {
+                _refinementCombiner = new GmshMinField { ID = gmshFile.NewFieldID() };
+                gmshFile.fields.Add(_refinementCombiner);
+                gmshFile.BackgroundFieldId = _refinementCombiner.ID;
+            }
+            _refinementCombiner.FieldsList.Add(thr.ID);
+        }
+
+        private int ResolveCurveId(object curve)
+        {
+            switch (curve)
+            {
+                case GeomLine gl:
+                    var l = gmshFile.FindLine(gl);
+                    return l?.ID ?? 0;
+                case GeomArc ga:
+                    var a = gmshFile.FindArc(ga);
+                    return a?.ID ?? 0;
+                default:
+                    throw new ArgumentException(
+                        $"AddDistanceRefinement: unsupported curve type '{curve?.GetType().Name ?? "null"}'. Expected GeomLine or GeomArc.");
+            }
+        }
+
         private static readonly bool IsWindows = OperatingSystem.IsWindows();
         private static readonly string[] GmshNames = IsWindows ? ["gmsh.exe", "gmsh"] : ["gmsh"];
 
