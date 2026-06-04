@@ -16,6 +16,12 @@ namespace MeshLib
         public List<GmshElementData> ElementData { get; } = new();
         public List<GmshElementNodeData> ElementNodeData { get; } = new();
 
+        /// <summary>
+        /// Map of physical tag -> physical name from the optional $PhysicalNames section.
+        /// Empty if the file did not include the section.
+        /// </summary>
+        public Dictionary<int, string> PhysicalNames { get; } = new();
+
         public static GmshFile Parse(string filePath)
         {
             var mshFile = new GmshFile();
@@ -45,6 +51,9 @@ namespace MeshLib
                         break;
                     case "$ElementNodeData":
                         ParseElementNodeData(reader, mshFile);
+                        break;
+                    case "$PhysicalNames":
+                        ParsePhysicalNames(reader, mshFile);
                         break;
                     default:
                         break;
@@ -214,6 +223,51 @@ namespace MeshLib
             mshFile.ElementData.Add(new GmshElementData(stringTags, realTags, integerTags, values));
 
             // Skip the $EndElementData line
+            reader.ReadLine();
+        }
+
+        private static void ParsePhysicalNames(StreamReader reader, GmshFile mshFile)
+        {
+            // Format per Gmsh spec:
+            //   $PhysicalNames
+            //   <count>
+            //   <dim> <tag> "<name>"
+            //   ...
+            //   $EndPhysicalNames
+            int count = int.Parse(reader.ReadLine()?.Trim() ?? "0", CultureInfo.InvariantCulture);
+            for (int i = 0; i < count; i++)
+            {
+                var raw = reader.ReadLine();
+                if (raw == null) break;
+                var line = raw.Trim();
+
+                // Pull out the quoted name first; what remains is "<dim> <tag>".
+                int q1 = line.IndexOf('"');
+                int q2 = q1 >= 0 ? line.IndexOf('"', q1 + 1) : -1;
+                string name;
+                string head;
+                if (q1 >= 0 && q2 > q1)
+                {
+                    name = line.Substring(q1 + 1, q2 - q1 - 1);
+                    head = line.Substring(0, q1).Trim();
+                }
+                else
+                {
+                    // Fallback: whitespace-split (some emitters omit quotes for names without spaces).
+                    var allParts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    if (allParts.Length < 3) continue;
+                    name = allParts[2];
+                    head = $"{allParts[0]} {allParts[1]}";
+                }
+
+                var headParts = head.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (headParts.Length < 2) continue;
+                if (!int.TryParse(headParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tag))
+                    continue;
+                mshFile.PhysicalNames[tag] = name;
+            }
+
+            // Skip the $EndPhysicalNames line
             reader.ReadLine();
         }
 
