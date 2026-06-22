@@ -34,7 +34,7 @@ namespace GeometryLib
         /// mixing them (the effective size at each location becomes the min of
         /// all sources).
         /// </summary>
-        public bool DisableOtherSizeSourcesWhenFieldActive { get; set; } = true;
+        public bool DisableOtherSizeSourcesWhenFieldActive { get; set; } = false;
 
         /// <summary>
         /// Whether gmsh is allowed to grow element sizes inward from the boundary
@@ -47,6 +47,18 @@ namespace GeometryLib
         /// really want the field to be the sole size source.
         /// </summary>
         public bool ExtendSizeFromBoundary { get; set; } = true;
+
+        /// <summary>
+        /// Curvature-based sizing target, expressed as the number of mesh elements gmsh
+        /// should place around a full 2π turn of a curve (maps to
+        /// <c>Mesh.MeshSizeFromCurvature</c>). <c>0</c> (the default) disables it, matching
+        /// gmsh's default and keeping the emitted <c>.geo</c> byte-for-byte identical to the
+        /// legacy output. A positive value seeds nodes directly on the true arc geometry
+        /// (e.g. conductor corner radii) even when a background mesh-size field is active; the
+        /// effective size at any point then becomes <c>min(field, curvatureSize)</c>. Roughly
+        /// <c>value/4</c> elements span a 90° fillet, so ~30 gives ~7-8 nodes per corner.
+        /// </summary>
+        public int MeshSizeFromCurvature { get; set; } = 80;
 
         public double lc { get; set; } = 0.1;
 
@@ -544,17 +556,28 @@ namespace GeometryLib
                 if (DisableOtherSizeSourcesWhenFieldActive)
                 {
                     // Make the background field authoritative for *requested* sizes:
-                    // ignore per-point lc and curvature-based sizing. We deliberately
-                    // do NOT disable MeshSizeExtendFromBoundary here — that one is
-                    // gmsh's growth-rate limiter, and turning it off produces sliver
+                    // ignore per-point lc and (by default) curvature-based sizing. We
+                    // deliberately do NOT disable MeshSizeExtendFromBoundary here — that
+                    // one is gmsh's growth-rate limiter, and turning it off produces sliver
                     // fans between a fine field region and a coarse outer boundary.
                     sw.WriteLine("Mesh.MeshSizeFromPoints = 0;");
-                    sw.WriteLine("Mesh.MeshSizeFromCurvature = 0;");
+                    // Curvature sizing is opt-in via MeshSizeFromCurvature. Default 0 keeps
+                    // the field the sole *requested-size* driver (legacy behaviour); a
+                    // positive value lets gmsh add nodes on true arcs (min-combined with the
+                    // field) so curved boundaries are resolved up front.
+                    //sw.WriteLine("Mesh.MeshSizeFromCurvature = {0};", MeshSizeFromCurvature);
                 }
                 sw.WriteLine("Mesh.MeshSizeExtendFromBoundary = {0};", ExtendSizeFromBoundary ? 1 : 0);
             }
+            else if (MeshSizeFromCurvature > 0)
+            {
+                // No background field: opt in to curvature-based sizing only when requested,
+                // so the default (0) leaves the emitted .geo byte-for-byte identical.
+                //sw.WriteLine("Mesh.MeshSizeFromCurvature = {0};", MeshSizeFromCurvature);
+            }
 
             sw.WriteLine("Mesh.MshFileVersion = 2;");
+            sw.WriteLine("Mesh.MinCurveNodes = 10;");
             sw.Close();
         }
 
@@ -1011,7 +1034,7 @@ namespace GeometryLib
     }
 
     // -------------------------------------------------------------------------
-    // Mesh-size fields (option 2: field-based local refinement). Each field is
+    // Mesh-size fields (field-based local refinement). Each field is
     // emitted as a `Field[id] = TypeName;` block followed by one line per
     // configured property. Combine them with `GmshMinField`, then assign the
     // combiner's ID to `GmshFile.BackgroundFieldId`.

@@ -14,6 +14,15 @@ namespace GeometryLib
         public bool CaptureOutputOnSuccess { get; set; } = false;
         public bool ShowInTerminal { get; set; } = false;
 
+        /// <summary>
+        /// Curvature-based sizing target forwarded to the emitted <c>.geo</c> (see
+        /// <see cref="GmshFile.MeshSizeFromCurvature"/>): the number of elements gmsh places
+        /// around a full 2π turn. <c>0</c> (default) disables it and leaves the output
+        /// unchanged; a positive value resolves true arc geometry (e.g. conductor corner
+        /// radii) on the initial mesh.
+        /// </summary>
+        public int MeshSizeFromCurvature { get; set; } = 80;
+
         // Configurable paths with smart defaults
         public string? GmshPath { get; set; }
 
@@ -228,6 +237,7 @@ namespace GeometryLib
             string gmshPath = FindGmshExecutable();
             Console.WriteLine($"Using gmsh at: {gmshPath}");
 
+            gmshFile.MeshSizeFromCurvature = MeshSizeFromCurvature;
             gmshFile.WriteFile(filename);
 
             // -setnumber Mesh.RemoveDuplicateNodes/Elements 1 collapses coincident nodes/elements
