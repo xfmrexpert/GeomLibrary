@@ -78,7 +78,7 @@ namespace MeshLib
             // First pass: count tris.
             int triCount = 0;
             foreach (var e in mesh.Elements)
-                if (IsTriangle(e.Type) && e.Nodes.Count >= 3) triCount++;
+                if (IsTriangle(e.Type)) triCount++;
 
             _triElementIds = new int[triCount];
             _triPhysicalTags = new int[triCount];
