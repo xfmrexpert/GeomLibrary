@@ -232,10 +232,26 @@ namespace GeometryLib
             return null;
         }
 
+        /// <summary>
+        /// Raised for every line gmsh (and this generator) would otherwise write to the
+        /// console. Hosts with their own output surface (e.g. a TUI status display) can
+        /// subscribe to keep the console clean; when nothing is subscribed the lines still
+        /// go to <see cref="Console"/> so existing callers behave as before.
+        /// </summary>
+        public event Action<string>? OutputReceived;
+
+        private void ReportOutput(string message)
+        {
+            if (OutputReceived is { } handler)
+                handler(message);
+            else
+                Console.WriteLine(message);
+        }
+
         public Mesh GenerateMesh(string filename, double meshscale = 1.0, int meshorder = 1)
         {
             string gmshPath = FindGmshExecutable();
-            Console.WriteLine($"Using gmsh at: {gmshPath}");
+            ReportOutput($"Using gmsh at: {gmshPath}");
 
             gmshFile.MeshSizeFromCurvature = MeshSizeFromCurvature;
             gmshFile.WriteFile(filename);
@@ -296,7 +312,7 @@ namespace GeometryLib
                     if (a.Data != null && sb != null)
                     {
                         sb.AppendLine(a.Data);
-                        Console.WriteLine(a.Data);
+                        ReportOutput(a.Data);
                     }
                 };
                 p.ErrorDataReceived += (s, a) =>
@@ -305,7 +321,7 @@ namespace GeometryLib
                     {
                         sb ??= new StringBuilder();
                         sb.AppendLine(a.Data);
-                        Console.WriteLine(a.Data);
+                        ReportOutput(a.Data);
                     }
                 };
             }
