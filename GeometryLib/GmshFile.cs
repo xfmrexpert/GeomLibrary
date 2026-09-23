@@ -299,7 +299,7 @@ namespace GeometryLib
             //TODO: Create plane and physical surfaces?  Maybe with a flag?
         }
 
-        public void CreateFromGeometry(Geometry geometry)
+        public void CreateFromGeometry(Geometry geometry, Func<GeomSurface, bool> includeSurface = null)
         {
             points.Clear();
             lines.Clear();
@@ -390,6 +390,9 @@ namespace GeometryLib
 
             foreach (var surface in geometry.Surfaces)
             {
+                if (includeSurface != null && !includeSurface(surface))
+                    continue;
+
                 var boundary = FindCurveLoop(surface.Boundary);
                 Debug.Assert(boundary != null);
                 List<GmshCurveLoop> holes = new List<GmshCurveLoop>();

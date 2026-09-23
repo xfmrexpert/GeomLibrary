@@ -31,9 +31,9 @@ namespace GeometryLib
             gmshFile = new GmshFile(); // ensure filename set
         }
 
-        public void AddGeometry(Geometry geometry)
+        public void AddGeometry(Geometry geometry, Func<GeomSurface, bool> includeSurface = null)
         {
-            gmshFile.CreateFromGeometry(geometry);
+            gmshFile.CreateFromGeometry(geometry, includeSurface);
         }
 
         // ---------------------------------------------------------------------
@@ -265,7 +265,7 @@ namespace GeometryLib
             // -setnumber Mesh.RenumberNodes/Elements 1 produces contiguous IDs after the removals so
             // the resulting msh2 file is self-consistent.
             string gmshArgs =
-                $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 3" +
+                $"{filename} -2 -order {meshorder} -clscale {meshscale} -format msh2 -v 3 " +
                 "-setnumber Mesh.RemoveDuplicateNodes 1 " +
                 "-setnumber Mesh.RemoveDuplicateElements 1 " +
                 "-setnumber Mesh.RenumberNodes 1 " +
@@ -307,13 +307,13 @@ namespace GeometryLib
                 p.StartInfo.RedirectStandardError = true;
                 p.StartInfo.UseShellExecute = false;
 
-                p.OutputDataReceived += (s, a) =>
+                p.OutputDataReceived += (_, args) =>
                 {
-                    if (a.Data != null && sb != null)
-                    {
-                        sb.AppendLine(a.Data);
-                        ReportOutput(a.Data);
-                    }
+                    if (args.Data is not { } message)
+                        return;
+
+                    sb?.AppendLine(message);
+                    ReportOutput(message);
                 };
                 p.ErrorDataReceived += (s, a) =>
                 {
